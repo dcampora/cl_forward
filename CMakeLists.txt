@@ -17,7 +17,7 @@
 set( SAMPLE_NAME gpupixel )
 set( SOURCE_FILES Tools.cpp Logger.cpp KernelInvoker.cpp
 GpuPixelSearchByTriplet.cpp IndependentEntrypoint.cpp )
-set( EXTRA_FILES Kernel.cl )
+set( EXTRA_FILES Kernel.cl KernelDefinitions.h )
 
 ############################################################################
 

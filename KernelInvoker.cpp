@@ -55,7 +55,7 @@ int invokeParallelSearch(
   //   dim3 numBlocks(eventsToProcess);
   //   dim3 numThreads(NUMTHREADS_X, 2);
   //   cudaFuncSetCacheConfig(searchByTriplet, cudaFuncCachePreferShared);
-  size_t global_work_size[1] = { eventsToProcess };
+  size_t global_work_size[1] = { (size_t) eventsToProcess * NUMTHREADS_X * 2 };
   size_t local_work_size[2] = { NUMTHREADS_X, 2 };
 
   // Step 1: Getting platforms and choose an available one
@@ -97,15 +97,34 @@ int invokeParallelSearch(
   cl_command_queue commandQueue = clCreateCommandQueue(context, devices[0], 0, NULL);
 
   // Step 5: Create program object
-  const char* filename = "Kernel.cl";
-  std::string sourceStr;
-  clCheck(convertClToString(filename, sourceStr));
-  const char* source = sourceStr.c_str();
-  size_t sourceSize[] = { sourceStr.size() };
+  std::string definitions_str, kernel_str, source_str;
+  clCheck(convertClToString("KernelDefinitions.h", definitions_str));
+  clCheck(convertClToString("Kernel.cl", kernel_str));
+  source_str = definitions_str + kernel_str;
+
+  const char* source = source_str.c_str();
+  size_t sourceSize[] = { source_str.size() };
   cl_program program = clCreateProgramWithSource(context, 1, &source, sourceSize, NULL);
   
   // Step 6: Build program
-  clCheck(clBuildProgram(program, 1, devices, NULL, NULL, NULL));
+  cl_int status = clBuildProgram(program, 1, devices, NULL, NULL, NULL);
+
+  if (status != CL_SUCCESS) {
+    std::cerr << "Error string: " << getErrorString(status) << std::endl;
+
+    if (status == CL_BUILD_PROGRAM_FAILURE) {
+      size_t log_size;
+      clGetProgramBuildInfo(program, devices[0], CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
+      char* log = (char *) malloc(log_size);
+      clGetProgramBuildInfo(program, devices[0], CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
+      std::cerr << "Build log: " << std::endl << log << std::endl;
+    }
+
+    exit(-1);
+  }
+
+  size_t size;
+  clCheck(clGetProgramBuildInfo(program, devices[0], CL_PROGRAM_BUILD_LOG , 0, NULL, &size));
 
   // Step 7: Memory
   
@@ -114,7 +133,7 @@ int invokeParallelSearch(
   std::vector<int> event_offsets;
   std::vector<int> hit_offsets;
   int acc_size = 0, acc_hits = 0;
-  for (int i=0; i<eventsToProcess; ++i){
+  for (int i=0; i<eventsToProcess; ++i) {
     EventBeginning* event = (EventBeginning*) &(*(input[startingEvent + i]))[0];
     const int event_size = input[startingEvent + i]->size();
 
@@ -153,58 +172,106 @@ int invokeParallelSearch(
   cl_mem dev_weak_tracks = clCreateBuffer(context, CL_MEM_READ_WRITE, acc_hits * sizeof(int), NULL, &errcode_ret); checkClError(errcode_ret);
   cl_mem dev_tracks_to_follow = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * TTF_MODULO * sizeof(int), NULL, &errcode_ret); checkClError(errcode_ret);
   cl_mem dev_atomicsStorage = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * atomic_space * sizeof(int), NULL, &errcode_ret); checkClError(errcode_ret);
-  cl_mem dev_event_offsets = clCreateBuffer(context, CL_MEM_READ_ONLY, event_offsets.size() * sizeof(int), event_offsets, &errcode_ret); checkClError(errcode_ret);
-  cl_mem dev_hit_offsets = clCreateBuffer(context, CL_MEM_READ_ONLY, hit_offsets.size() * sizeof(int), hit_offsets, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_event_offsets = clCreateBuffer(context, CL_MEM_READ_ONLY, event_offsets.size() * sizeof(int), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_hit_offsets = clCreateBuffer(context, CL_MEM_READ_ONLY, hit_offsets.size() * sizeof(int), NULL, &errcode_ret); checkClError(errcode_ret);
   cl_mem dev_hit_used = clCreateBuffer(context, CL_MEM_READ_WRITE, acc_hits * sizeof(bool), NULL, &errcode_ret); checkClError(errcode_ret);
   cl_mem dev_input = clCreateBuffer(context, CL_MEM_READ_ONLY, acc_size * sizeof(char), NULL, &errcode_ret); checkClError(errcode_ret);
-  cl_mem dev_best_fits = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * numThreads.x * MAX_NUMTHREADS_Y * sizeof(float), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_best_fits = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * NUMTHREADS_X * MAX_NUMTHREADS_Y * sizeof(float), NULL, &errcode_ret); checkClError(errcode_ret);
   cl_mem dev_hit_candidates = clCreateBuffer(context, CL_MEM_READ_WRITE, 2 * acc_hits * sizeof(int), NULL, &errcode_ret); checkClError(errcode_ret);
   cl_mem dev_hit_h2_candidates = clCreateBuffer(context, CL_MEM_READ_WRITE, 2 * acc_hits * sizeof(int), NULL, &errcode_ret); checkClError(errcode_ret);
 
+  clCheck(clEnqueueWriteBuffer(commandQueue, dev_event_offsets, CL_TRUE, 0, event_offsets.size() * sizeof(int), &event_offsets[0], 0, NULL, NULL));
+  clCheck(clEnqueueWriteBuffer(commandQueue, dev_hit_offsets, CL_TRUE, 0, hit_offsets.size() * sizeof(int), &hit_offsets[0], 0, NULL, NULL));
+
   acc_size = 0;
-  for (int i=0; i<eventsToProcess; ++i){
+  for (int i=0; i<eventsToProcess; ++i) {
     // cudaCheck(cudaMemcpy(&dev_input[acc_size], &(*(input[startingEvent + i]))[0], input[startingEvent + i]->size(), cudaMemcpyHostToDevice));
-    clCheck(clEnqueueWriteBuffer(commandQueue, &dev_input[acc_size], CL_TRUE, 0, input[startingEvent + i]->size(), &(*(input[startingEvent + i]))[0], 0, NULL, NULL));
+    clCheck(clEnqueueWriteBuffer(commandQueue, dev_input, CL_TRUE, acc_size, input[startingEvent + i]->size(), &(*(input[startingEvent + i]))[0], 0, NULL, NULL));
     acc_size += input[startingEvent + i]->size();
   }
 
+  // Initialize values to zero
+  clInitializeValue<bool>(commandQueue, dev_hit_used, acc_hits, false);
+  clInitializeValue<int>(commandQueue, dev_atomicsStorage, eventsToProcess * atomic_space, 0);
+  clInitializeValue<int>(commandQueue, dev_hit_candidates, 2 * acc_hits, -1);
+  clInitializeValue<int>(commandQueue, dev_hit_h2_candidates, 2 * acc_hits, -1);
+
+  // Just for debugging
+  clInitializeValue<char>(commandQueue, dev_tracks, eventsToProcess * MAX_TRACKS * sizeof(Track), 0);
+  clInitializeValue<char>(commandQueue, dev_tracklets, acc_hits * sizeof(Track), 0);
+  clInitializeValue<int>(commandQueue, dev_tracks_to_follow, eventsToProcess * TTF_MODULO, 0);
+
   // Step 8: Create kernel object
-  cl_kernel kernel = clCreateKernel(program, "helloworld", NULL);
+  cl_kernel kernel = clCreateKernel(program, "clSearchByTriplets", NULL);
 
   // Step 9: Sets Kernel arguments 
-  clCheck(clSetKernelArg(kernel, 0, sizeof(cl_mem), (void *) &inputBuffer));
-  clCheck(clSetKernelArg(kernel, 1, sizeof(cl_mem), (void *) &outputBuffer));
+  clCheck(clSetKernelArg(kernel, 0, sizeof(cl_mem), (void *) &dev_tracks));
+  clCheck(clSetKernelArg(kernel, 1, sizeof(cl_mem), (void *) &dev_input));
+  clCheck(clSetKernelArg(kernel, 2, sizeof(cl_mem), (void *) &dev_tracks_to_follow));
+  clCheck(clSetKernelArg(kernel, 3, sizeof(cl_mem), (void *) &dev_hit_used));
+  clCheck(clSetKernelArg(kernel, 4, sizeof(cl_mem), (void *) &dev_atomicsStorage));
+  clCheck(clSetKernelArg(kernel, 5, sizeof(cl_mem), (void *) &dev_tracklets));
+  clCheck(clSetKernelArg(kernel, 6, sizeof(cl_mem), (void *) &dev_weak_tracks));
+  clCheck(clSetKernelArg(kernel, 7, sizeof(cl_mem), (void *) &dev_event_offsets));
+  clCheck(clSetKernelArg(kernel, 8, sizeof(cl_mem), (void *) &dev_hit_offsets));
+  clCheck(clSetKernelArg(kernel, 9, sizeof(cl_mem), (void *) &dev_best_fits));
+  clCheck(clSetKernelArg(kernel, 10, sizeof(cl_mem), (void *) &dev_hit_candidates));
+  clCheck(clSetKernelArg(kernel, 11, sizeof(cl_mem), (void *) &dev_hit_h2_candidates));
   
   // Step 10: Running the kernel
-  size_t global_work_size[1] = { input_strlen };
-  clCheck(clEnqueueNDRangeKernel(commandQueue, kernel, 1, NULL, global_work_size, NULL, 0, NULL, NULL));
+  clCheck(clEnqueueNDRangeKernel(commandQueue, kernel, 1, NULL, global_work_size, local_work_size, 0, NULL, NULL));
 
-  // Step 11: Read the cout put back to host memory
-  clCheck(clEnqueueReadBuffer(commandQueue, outputBuffer, CL_TRUE, 0, input_strlen * sizeof(char), opencl_output, 0, NULL, NULL));
+  // Step 11: Get results
   
-  opencl_output[input_strlen] = '\0'; //Add the terminal character to the end of opencl_output.
-  std::cout << std::endl << "opencl_output string:" << std::endl;
-  std::cout << opencl_output << std::endl;
+  // Get results
+  DEBUG << "Number of tracks found per event:" << std::endl << " ";
+  clCheck(clEnqueueReadBuffer(commandQueue, dev_atomicsStorage, CL_TRUE, 0, eventsToProcess * atomic_space * sizeof(int), atomics, 0, NULL, NULL));
+  for (int i=0; i<eventsToProcess; ++i){
+    const int numberOfTracks = atomics[i];
+    DEBUG << numberOfTracks << ", ";
+    
+    output[startingEvent + i].resize(numberOfTracks * sizeof(Track));
+    if (numberOfTracks > 0) {
+      clCheck(clEnqueueReadBuffer(commandQueue, dev_tracks, CL_TRUE, i * MAX_TRACKS, numberOfTracks * sizeof(Track), &(output[startingEvent + i])[0], 0, NULL, NULL));
+    }
+  }
+  DEBUG << std::endl;
+  
+  // Print solution tracks of event 0
+  if (PRINT_SOLUTION) {
+    const int numberOfTracks = output[0].size() / sizeof(Track);
+    Track* tracks_in_solution = (Track*) &(output[0])[0];
+    if (logger::ll.verbosityLevel > 0){
+      for(int i=0; i<numberOfTracks; ++i){
+        printTrack(tracks_in_solution, i, zhit_to_module);
+      }
+    }
+  }
 
   // Step 12: Clean the resources
-  clCheck(clReleaseKernel(kernel));       //Release kernel.
-  clCheck(clReleaseProgram(program));       //Release the program object.
-  clCheck(clReleaseMemObject(inputBuffer));   //Release mem object.
-  clCheck(clReleaseMemObject(outputBuffer));
-  clCheck(clReleaseCommandQueue(commandQueue)); //Release  Command queue.
-  clCheck(clReleaseContext(context));       //Release context.
+  clCheck(clReleaseKernel(kernel));
+  clCheck(clReleaseProgram(program));
+  clCheck(clReleaseCommandQueue(commandQueue));
+  clCheck(clReleaseContext(context));
+  clCheck(clReleaseMemObject(dev_tracks));
+  clCheck(clReleaseMemObject(dev_tracklets));
+  clCheck(clReleaseMemObject(dev_weak_tracks));
+  clCheck(clReleaseMemObject(dev_tracks_to_follow));
+  clCheck(clReleaseMemObject(dev_atomicsStorage));
+  clCheck(clReleaseMemObject(dev_event_offsets));
+  clCheck(clReleaseMemObject(dev_hit_offsets));
+  clCheck(clReleaseMemObject(dev_hit_used));
+  clCheck(clReleaseMemObject(dev_input));
+  clCheck(clReleaseMemObject(dev_best_fits));
+  clCheck(clReleaseMemObject(dev_hit_candidates));
+  clCheck(clReleaseMemObject(dev_hit_h2_candidates));
 
-  if (opencl_output != NULL) {
-    free(opencl_output);
-    opencl_output = NULL;
-  }
+  free(atomics);
 
   if (devices != NULL) {
     free(devices);
     devices = NULL;
   }
-
-  std::cout << "Passed!" << std::endl;
 
 //   // Adding timing
 //   // Timing calculation
@@ -268,18 +335,6 @@ int invokeParallelSearch(
 //     DEBUG << std::endl;
 //   }
 
-//   // Get results
-//   DEBUG << "Number of tracks found per event:" << std::endl << " ";
-//   cudaCheck(cudaMemcpy(atomics, dev_atomicsStorage, eventsToProcess * atomic_space * sizeof(int), cudaMemcpyDeviceToHost));
-//   for (int i=0; i<eventsToProcess; ++i){
-//     const int numberOfTracks = atomics[i];
-//     DEBUG << numberOfTracks << ", ";
-    
-//     output[startingEvent + i].resize(numberOfTracks * sizeof(Track));
-//     cudaCheck(cudaMemcpy(&(output[startingEvent + i])[0], &dev_tracks[i * MAX_TRACKS], numberOfTracks * sizeof(Track), cudaMemcpyDeviceToHost));
-//   }
-//   DEBUG << std::endl;
-
 //   // cudaCheck(cudaMemcpy(hit_candidates, dev_hit_candidates, 2 * acc_hits * sizeof(int), cudaMemcpyDeviceToHost));
 //   // std::ofstream hc0("hit_candidates.0");
 //   // std::ofstream hc1("hit_candidates.1");
@@ -288,16 +343,6 @@ int invokeParallelSearch(
 //   // hc0.close();
 //   // hc1.close();
 
-//   // Print solution tracks of event 0
-//   if (PRINT_SOLUTION) {
-//     const int numberOfTracks = output[0].size() / sizeof(Track);
-//     Track* tracks_in_solution = (Track*) &(output[0])[0];
-//     if (logger::ll.verbosityLevel > 0){
-//       for(int i=0; i<numberOfTracks; ++i){
-//         printTrack(tracks_in_solution, i, zhit_to_module);
-//       }
-//     }
-//   }
 
 //   DEBUG << std::endl << "Time averages:" << std::endl;
 //   for (auto i=0; i<nexperiments; ++i){
@@ -305,8 +350,6 @@ int invokeParallelSearch(
 //     DEBUG << " nthreads (" << NUMTHREADS_X << ", " << (nexperiments==1 ? numThreads.y : i+1) <<  "): " << mresults[i]["mean"]
 //       << " ms (std dev " << mresults[i]["deviation"] << ")" << std::endl;
 //   }
-
-//   free(atomics);
 
   return 0;
 }

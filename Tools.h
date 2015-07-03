@@ -27,7 +27,8 @@
   cl_int status = stmt; \
   if (status != CL_SUCCESS) { \
     std::cerr << "Error in function " << #stmt << std::endl; \
-    return -1; \
+    std::cerr << "Error string: " << getErrorString(status) << std::endl; \
+    exit(-1); \
   } \
 }
 
@@ -50,6 +51,20 @@ int divide (float* a, float* b, float* c, unsigned int* d, int first, int last);
 template<typename T> void swap (T& a, T& b);
 
 std::map<std::string, float> calcResults(std::vector<float>& times);
-void checkClError(const cl_int errcode_ret);
+void checkClError (const cl_int errcode_ret);
+const char *getErrorString (cl_int error);
+
+template <class T>
+void clInitializeValue(cl_command_queue& commandQueue, cl_mem& param, size_t size, T value) {
+    T* temp;
+    if (value == 0) temp = (T*) calloc(size, sizeof(T));
+    else {
+        temp = (T*) malloc(size * sizeof(T));
+        for (int i=0; i<size; ++i) temp[i] = value;
+    }
+
+    clCheck(clEnqueueWriteBuffer(commandQueue, param, CL_TRUE, 0, size * sizeof(T), temp, 0, NULL, NULL));
+    free(temp);
+}
 
 #endif
