@@ -225,8 +225,7 @@ int invokeParallelSearch(
   clReleaseEvent(kernelEvent);
 
   // Compute the duration in nanoseconds
-  unsigned long duration = tend - tstart;
-  DEBUG << "Execution time (ms): " << duration / 1000000.0 << std::endl;
+  unsigned long tduration = tend - tstart;
 
   // Step 11: Get results
   DEBUG << "Number of tracks found per event:" << std::endl << " ";
@@ -241,6 +240,8 @@ int invokeParallelSearch(
     }
   }
   DEBUG << std::endl;
+
+  DEBUG << "Execution time (ms): " << tduration / 1000000.0 << std::endl;
   
   // Print solution tracks of event 0
   if (PRINT_SOLUTION) {
