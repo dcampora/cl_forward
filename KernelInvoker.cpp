@@ -102,7 +102,7 @@ int invokeParallelSearch(
   cl_context context = clCreateContext(NULL, 1, devices, NULL, NULL, NULL);
 
   // Step 4: Creating command queue associate with the context
-  cl_command_queue commandQueue = clCreateCommandQueue(context, devices[0], 0, NULL);
+  cl_command_queue commandQueue = clCreateCommandQueue(context, devices[0], CL_QUEUE_PROFILING_ENABLE, NULL);
 
   // Step 5: Create program object
   std::string definitions_str, kernel_str, source_str;
@@ -211,20 +211,22 @@ int invokeParallelSearch(
   clCheck(clFinish(commandQueue));
   DEBUG << "Invoking kernel..." << std::endl;
 
-  cl_ulong timeStart, timeEnd;
-
-
   // Step 10: Running the kernel
   cl_event kernelEvent;
-  clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_START, sizeof(timeStart), &timeStart, NULL);
 
   clCheck(clEnqueueNDRangeKernel(commandQueue, kernel, work_dim, NULL, global_work_size, local_work_size, 0, NULL, &kernelEvent));
   clCheck(clFinish(commandQueue));
-
-  clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_END, sizeof(timeEnd), &timeEnd, NULL);
-  cl_ulong totalTime = timeEnd - timeStart;
   
-  DEBUG << "Execution time (ms): " << totalTime / 1000000.0 << std::endl;
+  // Start and end of event
+  unsigned long tstart = 0;
+  unsigned long tend = 0;
+  clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_START, sizeof(cl_ulong) , &start, NULL);       
+  clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
+  clReleaseEvent(kernelEvent);
+
+  // Compute the duration in nanoseconds
+  unsigned long duration = tend - tstart;  
+  DEBUG << "Execution time (ms): " << duration / 1000000.0 << std::endl;
 
   // Step 11: Get results
   
