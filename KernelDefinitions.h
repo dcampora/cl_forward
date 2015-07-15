@@ -2,7 +2,7 @@
 #define NUMTHREADS_X 64
 #define MAX_NUMTHREADS_Y 16
 #define NUM_ATOMICS 5
-#define USE_SHARED_FOR_HITS 1
+#define USE_SHARED_FOR_HITS true
 #define SH_HIT_MULT 2
 
 #define MAX_TRACKS 3000
@@ -31,7 +31,7 @@
 
 #if ASSERTS_ENABLED == true
 #include "assert.h"
-#define ASSERT(EXPR) assert(EXPR);
+#define ASSERT(EXPR) ASSERT_CL_RETURN(EXPR, #EXPR);
 #else
 #define ASSERT(EXPR) 
 #endif

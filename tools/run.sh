@@ -18,4 +18,4 @@ do
   fi
 done
 
-./gpupixel $INPUT
+./bin/x86_64/Release/gpupixel $INPUT

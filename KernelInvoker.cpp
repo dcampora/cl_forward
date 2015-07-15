@@ -55,8 +55,9 @@ int invokeParallelSearch(
   //   dim3 numBlocks(eventsToProcess);
   //   dim3 numThreads(NUMTHREADS_X, 2);
   //   cudaFuncSetCacheConfig(searchByTriplet, cudaFuncCachePreferShared);
-  size_t global_work_size[1] = { (size_t) eventsToProcess * NUMTHREADS_X * 2 };
+  size_t global_work_size[2] = { NUMTHREADS_X * eventsToProcess, 2 };
   size_t local_work_size[2] = { NUMTHREADS_X, 2 };
+  cl_uint work_dim = 2;
 
   // Step 1: Getting platforms and choose an available one
   cl_uint numPlatforms; // the NO. of platforms
@@ -76,16 +77,23 @@ int invokeParallelSearch(
   cl_uint       numDevices = 0;
   cl_device_id        *devices;
   
-  clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 0, NULL, &numDevices));
+  // Load CPU for debugging purposes
+  // DEBUG << "Using CPU as device" << std::endl;
+  // clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, 0, NULL, &numDevices));
+  // devices = (cl_device_id*) malloc(numDevices * sizeof(cl_device_id));
+  // clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, numDevices, devices, NULL));
 
+  // We don't check this call. If it fails, we use a CPU device
+  cl_int status_ids = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 0, NULL, &numDevices);
   if (numDevices == 0) {
-    std::cout << "No GPU device available." << std::endl;
-    std::cout << "Choosing CPU as default device." << std::endl;
+    DEBUG << "No GPU device available." << std::endl;
+    DEBUG << "Choosing CPU as default device." << std::endl;
     clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, 0, NULL, &numDevices));
     devices = (cl_device_id*) malloc(numDevices * sizeof(cl_device_id));
     clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, numDevices, devices, NULL));
   }
   else {
+    DEBUG << "Choosing GPU device" << std::endl;
     devices = (cl_device_id*) malloc(numDevices * sizeof(cl_device_id));
     clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, numDevices, devices, NULL));
   }
@@ -150,56 +158,38 @@ int invokeParallelSearch(
   int* hit_candidates = (int*) malloc(2 * acc_hits * sizeof(int));
 
   // Allocate GPU buffers
-  //   cudaCheck(cudaMalloc((void**)&dev_tracks, eventsToProcess * MAX_TRACKS * sizeof(Track)));
-  //   cudaCheck(cudaMalloc((void**)&dev_tracklets, acc_hits * sizeof(Track)));
-  //   cudaCheck(cudaMalloc((void**)&dev_weak_tracks, acc_hits * sizeof(int)));
-  //   cudaCheck(cudaMalloc((void**)&dev_tracks_to_follow, eventsToProcess * TTF_MODULO * sizeof(int)));
-  //   cudaCheck(cudaMalloc((void**)&dev_atomicsStorage, eventsToProcess * atomic_space * sizeof(int)));
-  //   cudaCheck(cudaMalloc((void**)&dev_event_offsets, event_offsets.size() * sizeof(int)));
-  //   cudaCheck(cudaMalloc((void**)&dev_hit_offsets, hit_offsets.size() * sizeof(int)));
-  //   cudaCheck(cudaMalloc((void**)&dev_hit_used, acc_hits * sizeof(bool)));
-  //   cudaCheck(cudaMalloc((void**)&dev_input, acc_size));
-  //   cudaCheck(cudaMalloc((void**)&dev_best_fits, eventsToProcess * numThreads.x * MAX_NUMTHREADS_Y * sizeof(float)));
-  //   cudaCheck(cudaMalloc((void**)&dev_hit_candidates, 2 * acc_hits * sizeof(int)));
-  //   cudaCheck(cudaMalloc((void**)&dev_hit_h2_candidates, 2 * acc_hits * sizeof(int)));
-
-  // Copy stuff from host memory to GPU buffers
-  //   cudaCheck(cudaMemcpy(dev_event_offsets, &event_offsets[0], event_offsets.size() * sizeof(int), cudaMemcpyHostToDevice));
-  //   cudaCheck(cudaMemcpy(dev_hit_offsets, &hit_offsets[0], hit_offsets.size() * sizeof(int), cudaMemcpyHostToDevice));
-
   cl_mem dev_tracks = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * MAX_TRACKS * sizeof(Track), NULL, &errcode_ret); checkClError(errcode_ret);
   cl_mem dev_tracklets = clCreateBuffer(context, CL_MEM_READ_WRITE, acc_hits * sizeof(Track), NULL, &errcode_ret); checkClError(errcode_ret);
-  cl_mem dev_weak_tracks = clCreateBuffer(context, CL_MEM_READ_WRITE, acc_hits * sizeof(int), NULL, &errcode_ret); checkClError(errcode_ret);
-  cl_mem dev_tracks_to_follow = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * TTF_MODULO * sizeof(int), NULL, &errcode_ret); checkClError(errcode_ret);
-  cl_mem dev_atomicsStorage = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * atomic_space * sizeof(int), NULL, &errcode_ret); checkClError(errcode_ret);
-  cl_mem dev_event_offsets = clCreateBuffer(context, CL_MEM_READ_ONLY, event_offsets.size() * sizeof(int), NULL, &errcode_ret); checkClError(errcode_ret);
-  cl_mem dev_hit_offsets = clCreateBuffer(context, CL_MEM_READ_ONLY, hit_offsets.size() * sizeof(int), NULL, &errcode_ret); checkClError(errcode_ret);
-  cl_mem dev_hit_used = clCreateBuffer(context, CL_MEM_READ_WRITE, acc_hits * sizeof(bool), NULL, &errcode_ret); checkClError(errcode_ret);
-  cl_mem dev_input = clCreateBuffer(context, CL_MEM_READ_ONLY, acc_size * sizeof(char), NULL, &errcode_ret); checkClError(errcode_ret);
-  cl_mem dev_best_fits = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * NUMTHREADS_X * MAX_NUMTHREADS_Y * sizeof(float), NULL, &errcode_ret); checkClError(errcode_ret);
-  cl_mem dev_hit_candidates = clCreateBuffer(context, CL_MEM_READ_WRITE, 2 * acc_hits * sizeof(int), NULL, &errcode_ret); checkClError(errcode_ret);
-  cl_mem dev_hit_h2_candidates = clCreateBuffer(context, CL_MEM_READ_WRITE, 2 * acc_hits * sizeof(int), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_weak_tracks = clCreateBuffer(context, CL_MEM_READ_WRITE, acc_hits * sizeof(cl_int), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_tracks_to_follow = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * TTF_MODULO * sizeof(cl_int), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_atomicsStorage = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * atomic_space * sizeof(cl_int), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_event_offsets = clCreateBuffer(context, CL_MEM_READ_ONLY, event_offsets.size() * sizeof(cl_int), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_hit_offsets = clCreateBuffer(context, CL_MEM_READ_ONLY, hit_offsets.size() * sizeof(cl_int), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_hit_used = clCreateBuffer(context, CL_MEM_READ_WRITE, acc_hits * sizeof(cl_bool), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_input = clCreateBuffer(context, CL_MEM_READ_ONLY, acc_size * sizeof(cl_char), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_best_fits = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * NUMTHREADS_X * MAX_NUMTHREADS_Y * sizeof(cl_float), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_hit_candidates = clCreateBuffer(context, CL_MEM_READ_WRITE, 2 * acc_hits * sizeof(cl_int), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_hit_h2_candidates = clCreateBuffer(context, CL_MEM_READ_WRITE, 2 * acc_hits * sizeof(cl_int), NULL, &errcode_ret); checkClError(errcode_ret);
 
-  clCheck(clEnqueueWriteBuffer(commandQueue, dev_event_offsets, CL_TRUE, 0, event_offsets.size() * sizeof(int), &event_offsets[0], 0, NULL, NULL));
-  clCheck(clEnqueueWriteBuffer(commandQueue, dev_hit_offsets, CL_TRUE, 0, hit_offsets.size() * sizeof(int), &hit_offsets[0], 0, NULL, NULL));
+  clCheck(clEnqueueWriteBuffer(commandQueue, dev_event_offsets, CL_TRUE, 0, event_offsets.size() * sizeof(cl_int), &event_offsets[0], 0, NULL, NULL));
+  clCheck(clEnqueueWriteBuffer(commandQueue, dev_hit_offsets, CL_TRUE, 0, hit_offsets.size() * sizeof(cl_int), &hit_offsets[0], 0, NULL, NULL));
 
   acc_size = 0;
   for (int i=0; i<eventsToProcess; ++i) {
-    // cudaCheck(cudaMemcpy(&dev_input[acc_size], &(*(input[startingEvent + i]))[0], input[startingEvent + i]->size(), cudaMemcpyHostToDevice));
     clCheck(clEnqueueWriteBuffer(commandQueue, dev_input, CL_TRUE, acc_size, input[startingEvent + i]->size(), &(*(input[startingEvent + i]))[0], 0, NULL, NULL));
     acc_size += input[startingEvent + i]->size();
   }
 
   // Initialize values to zero
-  clInitializeValue<bool>(commandQueue, dev_hit_used, acc_hits, false);
-  clInitializeValue<int>(commandQueue, dev_atomicsStorage, eventsToProcess * atomic_space, 0);
-  clInitializeValue<int>(commandQueue, dev_hit_candidates, 2 * acc_hits, -1);
-  clInitializeValue<int>(commandQueue, dev_hit_h2_candidates, 2 * acc_hits, -1);
+  clInitializeValue<cl_bool>(commandQueue, dev_hit_used, acc_hits, false);
+  clInitializeValue<cl_int>(commandQueue, dev_atomicsStorage, eventsToProcess * atomic_space, 0);
+  clInitializeValue<cl_int>(commandQueue, dev_hit_candidates, 2 * acc_hits, -1);
+  clInitializeValue<cl_int>(commandQueue, dev_hit_h2_candidates, 2 * acc_hits, -1);
 
   // Just for debugging
-  clInitializeValue<char>(commandQueue, dev_tracks, eventsToProcess * MAX_TRACKS * sizeof(Track), 0);
-  clInitializeValue<char>(commandQueue, dev_tracklets, acc_hits * sizeof(Track), 0);
-  clInitializeValue<int>(commandQueue, dev_tracks_to_follow, eventsToProcess * TTF_MODULO, 0);
+  clInitializeValue<cl_char>(commandQueue, dev_tracks, eventsToProcess * MAX_TRACKS * sizeof(Track), 0);
+  clInitializeValue<cl_char>(commandQueue, dev_tracklets, acc_hits * sizeof(Track), 0);
+  clInitializeValue<cl_int>(commandQueue, dev_tracks_to_follow, eventsToProcess * TTF_MODULO, 0);
 
   // Step 8: Create kernel object
   cl_kernel kernel = clCreateKernel(program, "clSearchByTriplets", NULL);
@@ -218,8 +208,23 @@ int invokeParallelSearch(
   clCheck(clSetKernelArg(kernel, 10, sizeof(cl_mem), (void *) &dev_hit_candidates));
   clCheck(clSetKernelArg(kernel, 11, sizeof(cl_mem), (void *) &dev_hit_h2_candidates));
   
+  clCheck(clFinish(commandQueue));
+  DEBUG << "Invoking kernel..." << std::endl;
+
+  cl_ulong timeStart, timeEnd;
+
+
   // Step 10: Running the kernel
-  clCheck(clEnqueueNDRangeKernel(commandQueue, kernel, 1, NULL, global_work_size, local_work_size, 0, NULL, NULL));
+  cl_event kernelEvent;
+  clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_START, sizeof(timeStart), &timeStart, NULL);
+
+  clCheck(clEnqueueNDRangeKernel(commandQueue, kernel, work_dim, NULL, global_work_size, local_work_size, 0, NULL, &kernelEvent));
+  clCheck(clFinish(commandQueue));
+
+  clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_END, sizeof(timeEnd), &timeEnd, NULL);
+  cl_ulong totalTime = timeEnd - timeStart;
+  
+  DEBUG << "Execution time (ms): " << totalTime / 1000000.0 << std::endl;
 
   // Step 11: Get results
   

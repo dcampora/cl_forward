@@ -1,5 +1,4 @@
 
-
 /**
  * @brief Fits hits to tracks.
  * @details In case the tolerances constraints are met,
@@ -601,7 +600,8 @@ __kernel void clSearchByTriplets(__global struct Track* const dev_tracks, __glob
   __global int* const dev_hit_offsets, __global float* const dev_best_fits,
   __global int* const dev_hit_candidates, __global int* const dev_hit_h2_candidates) {
   
-  /* Data initialization */
+
+  // Data initialization
   // Each event is treated with two blocks, one for each side.
   const int event_number = get_group_id(0);
   const int events_under_process = get_num_groups(0);
@@ -646,7 +646,7 @@ __kernel void clSearchByTriplets(__global struct Track* const dev_tracks, __glob
   __global int* const sh_hit_lastPointer = (__global int*) dev_atomicsStorage + ip_shift + 4;
   __global int* const max_numhits_to_process = (__global int*) dev_atomicsStorage + ip_shift + 5;
 
-  /* The fun begins */
+  // The fun begins
 #if USE_SHARED_FOR_HITS
   __local float sh_hit_x [NUMTHREADS_X * SH_HIT_MULT];
   __local float sh_hit_y [NUMTHREADS_X * SH_HIT_MULT];
@@ -793,6 +793,7 @@ __kernel void clSearchByTriplets(__global struct Track* const dev_tracks, __glob
   for (int i=0; i<(weaktracks_total + blockDim_product - 1) / blockDim_product; ++i) {
     const unsigned int weaktrack_no = blockDim_product * i + get_local_id(1) * get_local_size(0) + get_local_id(0);
     if (weaktrack_no < weaktracks_total) {
+
       // Load the tracks from the tracklets
       const struct Track t = tracklets[weak_tracks[weaktrack_no]];
 
