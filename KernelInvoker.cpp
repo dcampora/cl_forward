@@ -220,17 +220,15 @@ int invokeParallelSearch(
   // Start and end of event
   unsigned long tstart = 0;
   unsigned long tend = 0;
-  clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_START, sizeof(cl_ulong) , &start, NULL);       
-  clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end, NULL);
+  clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_START, sizeof(cl_ulong) , &tstart, NULL);
+  clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &tend, NULL);
   clReleaseEvent(kernelEvent);
 
   // Compute the duration in nanoseconds
-  unsigned long duration = tend - tstart;  
+  unsigned long duration = tend - tstart;
   DEBUG << "Execution time (ms): " << duration / 1000000.0 << std::endl;
 
   // Step 11: Get results
-  
-  // Get results
   DEBUG << "Number of tracks found per event:" << std::endl << " ";
   clCheck(clEnqueueReadBuffer(commandQueue, dev_atomicsStorage, CL_TRUE, 0, eventsToProcess * atomic_space * sizeof(int), atomics, 0, NULL, NULL));
   for (int i=0; i<eventsToProcess; ++i){
