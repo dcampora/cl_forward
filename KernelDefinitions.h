@@ -2,7 +2,7 @@
 #define NUMTHREADS_X 64
 #define MAX_NUMTHREADS_Y 16
 #define NUM_ATOMICS 5
-#define USE_SHARED_FOR_HITS true
+#define USE_SHARED_FOR_HITS false
 #define SH_HIT_MULT 2
 
 #define MAX_TRACKS 3000
@@ -27,6 +27,7 @@
 #define SENSOR_DATA_HITNUMS 3
 
 #define PRINT_SOLUTION false
+#define PRINT_VERBOSE false
 #define ASSERTS_ENABLED false
 
 #if ASSERTS_ENABLED == true
