@@ -68,19 +68,34 @@ endif()
 
 ############################################################################
 # Find OpenCL include and libs
-find_path( OPENCL_INCLUDE_DIRS 
-    NAMES OpenCL/cl.h CL/cl.h
-    HINTS ../../../../include/ $ENV{AMDAPPSDKROOT}/include/
-$ENV{NVIDIA_INSTALL_PATH}/include/
-)
+if(${ACCELERATOR} STREQUAL NVIDIA)
+    find_path( OPENCL_INCLUDE_DIRS 
+        NAMES OpenCL/cl.h CL/cl.h
+        HINTS ../../../../include/ $ENV{NVIDIA_INSTALL_PATH}/include/
+    $ENV{NVIDIA_INSTALL_PATH}/include/
+    )
+else()
+    find_path( OPENCL_INCLUDE_DIRS 
+        NAMES OpenCL/cl.h CL/cl.h
+        HINTS ../../../../include/ $ENV{AMDAPPSDKROOT}/include/
+    $ENV{NVIDIA_INSTALL_PATH}/include/
+    )
+endif()
 mark_as_advanced(OPENCL_INCLUDE_DIRS)
 
-find_library( OPENCL_LIBRARIES
-	NAMES OpenCL
-	HINTS ../../../../lib/ $ENV{AMDAPPSDKROOT}/lib
-$ENV{NVIDIA_INSTALL_PATH}/lib64/
-	PATH_SUFFIXES ${PLATFORM}${BITNESS} ${BITNESS_SUFFIX}
-)
+if(${ACCELERATOR} STREQUAL NVIDIA)
+    find_library( OPENCL_LIBRARIES
+    	NAMES OpenCL
+    	HINTS ../../../../lib/ $ENV{NVIDIA_INSTALL_PATH}/lib64/
+    	PATH_SUFFIXES ${PLATFORM}${BITNESS} ${BITNESS_SUFFIX}
+    )
+else()
+    find_library( OPENCL_LIBRARIES
+        NAMES OpenCL
+        HINTS ../../../../lib/ $ENV{AMDAPPSDKROOT}/lib
+        PATH_SUFFIXES ${PLATFORM}${BITNESS} ${BITNESS_SUFFIX}
+    )
+endif()
 mark_as_advanced( OPENCL_LIBRARIES )
 
 if( OPENCL_INCLUDE_DIRS STREQUAL "" OR OPENCL_LIBRARIES STREQUAL "")
@@ -111,7 +126,11 @@ set( LINKER_FLAGS " " )
 set( ADDITIONAL_LIBRARIES "" )
 
 file(GLOB INCLUDE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/*.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/*.h" )
-include_directories( ${OPENCL_INCLUDE_DIRS} ../../../../include/SDKUtil $ENV{AMDAPPSDKROOT}/include/SDKUtil )
+if(${ACCELERATOR} STREQUAL NVIDIA)
+    include_directories( ${OPENCL_INCLUDE_DIRS} ../../../../include/SDKUtil $ENV{NVIDIA_INSTALL_PATH}/include )
+else()
+    include_directories( ${OPENCL_INCLUDE_DIRS} ../../../../include/SDKUtil $ENV{AMDAPPSDKROOT}/include/SDKUtil )
+endif()
 
 add_executable( ${SAMPLE_NAME} ${SOURCE_FILES} ${INCLUDE_FILES} ${EXTRA_FILES})
 
