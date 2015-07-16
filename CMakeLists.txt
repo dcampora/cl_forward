@@ -68,7 +68,7 @@ endif()
 
 ############################################################################
 # Find OpenCL include and libs
-if(${ACCELERATOR} STREQUAL NVIDIA)
+if("${ACCELERATOR}" STREQUAL NVIDIA)
     find_path( OPENCL_INCLUDE_DIRS 
         NAMES OpenCL/cl.h CL/cl.h
         HINTS ../../../../include/ $ENV{NVIDIA_INSTALL_PATH}/include/
@@ -83,7 +83,7 @@ else()
 endif()
 mark_as_advanced(OPENCL_INCLUDE_DIRS)
 
-if(${ACCELERATOR} STREQUAL NVIDIA)
+if("${ACCELERATOR}" STREQUAL NVIDIA)
     find_library( OPENCL_LIBRARIES
     	NAMES OpenCL
     	HINTS ../../../../lib/ $ENV{NVIDIA_INSTALL_PATH}/lib64/
@@ -126,7 +126,7 @@ set( LINKER_FLAGS " " )
 set( ADDITIONAL_LIBRARIES "" )
 
 file(GLOB INCLUDE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/*.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/*.h" )
-if(${ACCELERATOR} STREQUAL NVIDIA)
+if("${ACCELERATOR}" STREQUAL NVIDIA)
     include_directories( ${OPENCL_INCLUDE_DIRS} ../../../../include/SDKUtil $ENV{NVIDIA_INSTALL_PATH}/include )
 else()
     include_directories( ${OPENCL_INCLUDE_DIRS} ../../../../include/SDKUtil $ENV{AMDAPPSDKROOT}/include/SDKUtil )
