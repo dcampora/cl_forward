@@ -195,7 +195,10 @@ int invokeParallelSearch(
   std::vector<std::vector<float>> time_values {nexperiments};
   std::vector<std::map<std::string, float>> mresults {nexperiments};
 
-  DEBUG << "Invoking kernels on your OpenCL compatible device :)" << std::endl;
+  // Get and log the OpenCL device ID's
+  char cBuffer[1024];
+  clCheck( clGetPlatformInfo (devices[0], CL_PLATFORM_NAME, sizeof(cBuffer), cBuffer, NULL) );
+  DEBUG << "Invoking kernels on your " << cBuffer << " device :)" << std::endl;
 
   for (auto i=0; i<nexperiments; ++i) {
     // Update the number of threads in Y if more than 1 experiment
