@@ -66,7 +66,8 @@ int invokeParallelSearch(
   // Step 2: Query the platform and choose the first GPU device if has one.Otherwise use the CPU as device
   cl_uint       numDevices = 0;
   cl_device_id        *devices;
-  
+  char deviceName [1024] = "CPU\0";
+
   // Run on CPU - Don't try to poll for GPU devices
   // DEBUG << "Using CPU as device" << std::endl;
   // clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, 0, NULL, &numDevices));
@@ -87,6 +88,10 @@ int invokeParallelSearch(
     devices = (cl_device_id*) malloc(numDevices * sizeof(cl_device_id));
     clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, numDevices, devices, NULL));
   }
+  cl_platform_id* clPlatformIDs;
+  clPlatformIDs = (cl_platform_id*) malloc(numDevices * sizeof(cl_platform_id));
+  clCheck( clGetPlatformIDs(numDevices, clPlatformIDs, NULL) );
+  clCheck( clGetPlatformInfo (clPlatformIDs[0], CL_PLATFORM_NAME, sizeof(deviceName), deviceName, NULL) );
 
   // Step 3: Create context
   cl_context context = clCreateContext(NULL, 1, devices, NULL, NULL, NULL);
@@ -96,10 +101,10 @@ int invokeParallelSearch(
 
   // Step 5: Create program object - KernelDefinitions.h + Kernel.cl
   std::string definitions_str, kernel_str, source_str;
-  // clCheck(convertClToString("KernelDefinitions.h", definitions_str));
+  clCheck(convertClToString("KernelDefinitions.h", definitions_str));
   clCheck(convertClToString("Kernel.cl", kernel_str));
-  // source_str = definitions_str + kernel_str;
-  source_str = kernel_str;
+  source_str = definitions_str + kernel_str;
+  // source_str = kernel_str;
   const char* source = source_str.c_str();
   size_t sourceSize[] = { source_str.size() };
   cl_program program = clCreateProgramWithSource(context, 1, &source, sourceSize, NULL);
@@ -198,12 +203,7 @@ int invokeParallelSearch(
   std::vector<std::map<std::string, float>> mresults {nexperiments};
 
   // Get and log the OpenCL device ID's
-  cl_platform_id* clPlatformIDs;
-  clPlatformIDs = (cl_platform_id*) malloc(numDevices * sizeof(cl_platform_id));
-  clCheck( clGetPlatformIDs(numDevices, clPlatformIDs, NULL) );
-  char cBuffer[1024];
-  clCheck( clGetPlatformInfo (clPlatformIDs[0], CL_PLATFORM_NAME, sizeof(cBuffer), cBuffer, NULL) );
-  DEBUG << "Invoking kernels on your " << cBuffer << " device :)" << std::endl;
+  DEBUG << "Invoking kernels on your " << deviceName << std::endl;
 
   for (auto i=0; i<nexperiments; ++i) {
     // Update the number of threads in Y if more than 1 experiment
