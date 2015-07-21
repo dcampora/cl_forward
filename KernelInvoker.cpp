@@ -96,15 +96,16 @@ int invokeParallelSearch(
 
   // Step 5: Create program object - KernelDefinitions.h + Kernel.cl
   std::string definitions_str, kernel_str, source_str;
-  clCheck(convertClToString("KernelDefinitions.h", definitions_str));
+  // clCheck(convertClToString("KernelDefinitions.h", definitions_str));
   clCheck(convertClToString("Kernel.cl", kernel_str));
-  source_str = definitions_str + kernel_str;
+  // source_str = definitions_str + kernel_str;
+  source_str = kernel_str;
   const char* source = source_str.c_str();
   size_t sourceSize[] = { source_str.size() };
   cl_program program = clCreateProgramWithSource(context, 1, &source, sourceSize, NULL);
   
   // Step 6: Build program
-  const char* buildOptions = ""; // "-cl-nv-maxrregcount=32";
+  const char* buildOptions = "-g -s /home/dcampora/nfs/projects/gpu/tf_opencl/Kernel.cl"; // "-cl-nv-maxrregcount=32";
   cl_int status = clBuildProgram(program, 1, devices, buildOptions, NULL, NULL);
 
   if (status != CL_SUCCESS) {
@@ -196,23 +197,20 @@ int invokeParallelSearch(
   std::vector<std::map<std::string, float>> mresults {nexperiments};
 
   // Get and log the OpenCL device ID's
+  cl_platform_id* clPlatformIDs;
+  clPlatformIDs = (cl_platform_id*) malloc(numDevices * sizeof(cl_platform_id));
+  clCheck( clGetPlatformIDs(numDevices, clPlatformIDs, NULL) );
   char cBuffer[1024];
-  clCheck( clGetPlatformInfo (devices[0], CL_PLATFORM_NAME, sizeof(cBuffer), cBuffer, NULL) );
+  clCheck( clGetPlatformInfo (clPlatformIDs[0], CL_PLATFORM_NAME, sizeof(cBuffer), cBuffer, NULL) );
   DEBUG << "Invoking kernels on your " << cBuffer << " device :)" << std::endl;
 
   for (auto i=0; i<nexperiments; ++i) {
     // Update the number of threads in Y if more than 1 experiment
     if (nexperiments!=1) {
-      size_t wsize_exp = i+1;
-      if (i+1 >= 5) {
-        // Starting from 5, powers of 2
-        wsize_exp = pow(2, i-1);
-      }
+      global_work_size[1] = i+1;
+      local_work_size[1] = i+1;
 
-      global_work_size[1] = wsize_exp;
-      local_work_size[1] = wsize_exp;
-
-      DEBUG << wsize_exp << ": " << std::flush;
+      DEBUG << i+1 << ": " << std::flush;
     }
 
     for (auto j=0; j<niterations; ++j) {

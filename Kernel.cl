@@ -1,4 +1,58 @@
 
+#define NUMTHREADS_X 64
+#define MAX_NUMTHREADS_Y 16
+#define NUM_ATOMICS 5
+#define USE_SHARED_FOR_HITS false
+#define SH_HIT_MULT 2
+
+#define MAX_TRACKS 3000
+#define MAX_TRACK_SIZE 24
+
+#define REQUIRED_UNIQUES 0.6f
+#define MIN_HITS_TRACK 3
+#define MAX_FLOAT FLT_MAX
+#define MIN_FLOAT -FLT_MAX
+#define MAX_SKIPPED_MODULES 3
+#define TTF_MODULO 2000
+
+#define PARAM_W 3966.94f // 0.050 / sqrt( 12. )
+#define PARAM_MAXXSLOPE 0.4f
+#define PARAM_MAXYSLOPE 0.3f
+#define PARAM_MAXXSLOPE_CANDIDATES 0.4f
+
+#define PARAM_TOLERANCE 0.6f
+#define PARAM_TOLERANCE_CANDIDATES 0.6f
+
+#define MAX_SCATTER 0.000016f
+#define SENSOR_DATA_HITNUMS 3
+
+#define PRINT_SOLUTION false
+#define PRINT_VERBOSE false
+#define ASSERTS_ENABLED false
+
+#if ASSERTS_ENABLED == true
+#include "assert.h"
+#define ASSERT(EXPR) ASSERT_CL_RETURN(EXPR, #EXPR);
+#else
+#define ASSERT(EXPR) 
+#endif
+
+struct Sensor {
+    unsigned int hitStart;
+    unsigned int hitNums;
+};
+
+struct Hit {
+    float x;
+    float y;
+    float z;
+};
+
+struct Track { // 4 + 24 * 4 = 100 B
+    unsigned int hitsNum;
+    unsigned int hits[MAX_TRACK_SIZE];
+};
+
 /**
  * @brief Fits hits to tracks.
  * @details In case the tolerances constraints are met,
@@ -232,6 +286,7 @@ void trackForwarding(
 
       // Load last two hits in h0, h1
       const int t_hitsNum = t.hitsNum;
+      ASSERT(t_hitsNum < MAX_TRACK_SIZE)
       const int h0_num = t.hits[t_hitsNum - 2];
       const int h1_num = t.hits[t_hitsNum - 1];
 
@@ -693,6 +748,14 @@ __kernel void clSearchByTriplets(__global struct Track* const dev_tracks, __glob
     prev_ttf = last_ttf;
     last_ttf = ttf_insertPointer[0];
     const unsigned int diff_ttf = last_ttf - prev_ttf;
+
+#if USE_SHARED_FOR_HITS == false
+    // We need this barrier if we are not using shared memory for the hits.
+    // Removing shmem for hits removes the barriers in trackForwarding.
+    // Otherwise the three statements from before could be executed before / after updating
+    // the values inside trackForwarding
+    barrier(CLK_GLOBAL_MEM_FENCE);
+#endif
 
     // 2a. Track forwarding
     trackForwarding(

@@ -14,7 +14,7 @@
 # NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #################################################################################
 
-set( SAMPLE_NAME gpupixel )
+set( SAMPLE_NAME clpixel )
 set( SOURCE_FILES Tools.cpp Logger.cpp KernelInvoker.cpp
 GpuPixelSearchByTriplet.cpp IndependentEntrypoint.cpp )
 set( EXTRA_FILES Kernel.cl KernelDefinitions.h )

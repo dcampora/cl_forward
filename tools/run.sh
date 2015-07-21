@@ -18,4 +18,4 @@ do
   fi
 done
 
-./bin/x86_64/Release/gpupixel $INPUT
+./bin/x86_64/Release/clpixel $INPUT
