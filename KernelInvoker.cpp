@@ -105,7 +105,8 @@ int invokeParallelSearch(
   cl_program program = clCreateProgramWithSource(context, 1, &source, sourceSize, NULL);
   
   // Step 6: Build program
-  const char* buildOptions = "-g -s /home/dcampora/nfs/projects/gpu/tf_opencl/Kernel.cl"; // "-cl-nv-maxrregcount=32";
+  // const char* buildOptions = "-g -s /home/dcampora/nfs/projects/gpu/tf_opencl/Kernel.cl"; // "-cl-nv-maxrregcount=32";
+  const char* buildOptions = "";
   cl_int status = clBuildProgram(program, 1, devices, buildOptions, NULL, NULL);
 
   if (status != CL_SUCCESS) {

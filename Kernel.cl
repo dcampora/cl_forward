@@ -724,7 +724,7 @@ __kernel void clSearchByTriplets(__global struct Track* const dev_tracks, __glob
 
   while (first_sensor >= 4) {
 
-    barrier(CLK_LOCAL_MEM_FENCE);
+    barrier(CLK_GLOBAL_MEM_FENCE | CLK_LOCAL_MEM_FENCE);
     
     // Iterate in sensors
     // Load in shared
@@ -743,19 +743,15 @@ __kernel void clSearchByTriplets(__global struct Track* const dev_tracks, __glob
       max_numhits_to_process[0] = 0;
     }
 
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    prev_ttf = last_ttf;
-    last_ttf = ttf_insertPointer[0];
-    const unsigned int diff_ttf = last_ttf - prev_ttf;
-
-#if USE_SHARED_FOR_HITS == false
     // We need this barrier if we are not using shared memory for the hits.
     // Removing shmem for hits removes the barriers in trackForwarding.
     // Otherwise the three statements from before could be executed before / after updating
     // the values inside trackForwarding
-    barrier(CLK_GLOBAL_MEM_FENCE);
-#endif
+    prev_ttf = last_ttf;
+    last_ttf = ttf_insertPointer[0];
+    const unsigned int diff_ttf = last_ttf - prev_ttf;
+
+    barrier(CLK_GLOBAL_MEM_FENCE | CLK_LOCAL_MEM_FENCE);
 
     // 2a. Track forwarding
     trackForwarding(
