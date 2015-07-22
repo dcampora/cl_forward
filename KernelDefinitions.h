@@ -25,6 +25,7 @@
 
 #define MAX_SCATTER 0.000016f
 #define SENSOR_DATA_HITNUMS 3
+#define RESULTS_FOLDER "results"
 
 #define PRINT_SOLUTION false
 #define PRINT_VERBOSE false

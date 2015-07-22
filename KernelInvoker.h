@@ -21,7 +21,7 @@ void getMaxNumberOfHits(char*& input, int& maxHits);
 void printOutSensorHits(int sensorNumber, int* prevs, int* nexts);
 void printOutAllSensorHits(int* prevs, int* nexts);
 void printInfo(int numberOfSensors, int numberOfHits);
-void printTrack(Track* tracks, const int trackNumber, const std::map<int, int>& zhit_to_module);
+void printTrack(Track* tracks, const int trackNumber, const std::map<int, int>& zhit_to_module, std::ofstream& outstream);
 int findClosestModule(const int z, const std::map<int, int>& zhit_to_module);
 
 int invokeParallelSearch(

@@ -22,25 +22,6 @@ int invokeParallelSearch(
   setHPointersFromInput((uint8_t*) &(*startingEvent_input)[0], startingEvent_input->size());
   int number_of_sensors = *h_no_sensors;
 
-  std::map<int, int> zhit_to_module;
-  if (logger::ll.verbosityLevel > 0){
-    // map to convert from z of hit to module
-    for(int i=0; i<number_of_sensors; ++i){
-      const int z = h_sensor_Zs[i];
-      zhit_to_module[z] = i;
-    }
-
-    // Some hits z may not correspond to a sensor's,
-    // but be close enough
-    for(int i=0; i<*h_no_hits; ++i){
-      const int z = h_hit_Zs[i];
-      if (zhit_to_module.find(z) == zhit_to_module.end()){
-        const int sensor = findClosestModule(z, zhit_to_module);
-        zhit_to_module[z] = sensor;
-      }
-    }
-  }
-
   // Choose which GPU to run on, change this on a multi-GPU system.
   const int device_number = 0;
   
@@ -104,14 +85,14 @@ int invokeParallelSearch(
   clCheck(convertClToString("KernelDefinitions.h", definitions_str));
   clCheck(convertClToString("Kernel.cl", kernel_str));
   source_str = definitions_str + kernel_str;
-  // source_str = kernel_str;
   const char* source = source_str.c_str();
   size_t sourceSize[] = { source_str.size() };
   cl_program program = clCreateProgramWithSource(context, 1, &source, sourceSize, NULL);
   
   // Step 6: Build program
-  // const char* buildOptions = "-g -s /home/dcampora/nfs/projects/gpu/tf_opencl/Kernel.cl"; // "-cl-nv-maxrregcount=32";
   const char* buildOptions = "";
+  // const char* buildOptions = "-cl-nv-maxrregcount=32";
+  // const char* buildOptions = "-g -s /home/dcampora/nfs/projects/gpu/tf_opencl/KernelDefinitions.cl -s /home/dcampora/nfs/projects/gpu/tf_opencl/Kernel.cl"; 
   cl_int status = clBuildProgram(program, 1, devices, buildOptions, NULL, NULL);
 
   if (status != CL_SUCCESS) {
@@ -196,8 +177,8 @@ int invokeParallelSearch(
   
   // Adding timing
   // Timing calculation
-  unsigned int niterations = 4;
-  unsigned int nexperiments = 4;
+  unsigned int niterations = 1;
+  unsigned int nexperiments = 1;
 
   std::vector<std::vector<float>> time_values {nexperiments};
   std::vector<std::map<std::string, float>> mresults {nexperiments};
@@ -258,19 +239,44 @@ int invokeParallelSearch(
     
     output[startingEvent + i].resize(numberOfTracks * sizeof(Track));
     if (numberOfTracks > 0) {
-      clCheck(clEnqueueReadBuffer(commandQueue, dev_tracks, CL_TRUE, i * MAX_TRACKS, numberOfTracks * sizeof(Track), &(output[startingEvent + i])[0], 0, NULL, NULL));
+      clCheck(clEnqueueReadBuffer(commandQueue, dev_tracks, CL_TRUE, i * MAX_TRACKS * sizeof(Track), numberOfTracks * sizeof(Track), &(output[startingEvent + i])[0], 0, NULL, NULL));
     }
   }
   if (PRINT_SOLUTION) DEBUG << std::endl;
   
-  // Print solution tracks of event 0
   if (PRINT_VERBOSE) {
-    const int numberOfTracks = output[0].size() / sizeof(Track);
-    Track* tracks_in_solution = (Track*) &(output[0])[0];
-    if (logger::ll.verbosityLevel > 0){
-      for(int i=0; i<numberOfTracks; ++i){
-        printTrack(tracks_in_solution, i, zhit_to_module);
+    // Print solution of all events processed, to results
+    for (int i=0; i<eventsToProcess; ++i) {
+
+      // Calculate z to sensor map
+      std::map<int, int> zhit_to_module;
+      setHPointersFromInput((uint8_t*) &(*(input[startingEvent + i]))[0], input[startingEvent + i]->size());
+      int number_of_sensors = *h_no_sensors;
+      if (logger::ll.verbosityLevel > 0){
+        // map to convert from z of hit to module
+        for(int j=0; j<number_of_sensors; ++j){
+          const int z = h_sensor_Zs[j];
+          zhit_to_module[z] = j;
+        }
+        // Some hits z may not correspond to a sensor's,
+        // but be close enough
+        for(int j=0; j<*h_no_hits; ++j){
+          const int z = (int) h_hit_Zs[j];
+          if (zhit_to_module.find(z) == zhit_to_module.end()){
+            const int sensor = findClosestModule(z, zhit_to_module);
+            zhit_to_module[z] = sensor;
+          }
+        }
       }
+
+      // Print to output file with event no.
+      const int numberOfTracks = output[i].size() / sizeof(Track);
+      Track* tracks_in_solution = (Track*) &(output[startingEvent + i])[0];
+      std::ofstream outfile (std::string(RESULTS_FOLDER) + std::string("/") + toString(i) + std::string(".out"));
+      for(int j=0; j<numberOfTracks; ++j){
+        printTrack(tracks_in_solution, j, zhit_to_module, outfile);
+      }
+      outfile.close();
     }
   }
 
@@ -286,6 +292,7 @@ int invokeParallelSearch(
   clCheck(clReleaseProgram(program));
   clCheck(clReleaseCommandQueue(commandQueue));
   clCheck(clReleaseContext(context));
+
   clCheck(clReleaseMemObject(dev_tracks));
   clCheck(clReleaseMemObject(dev_tracklets));
   clCheck(clReleaseMemObject(dev_weak_tracks));
@@ -300,11 +307,7 @@ int invokeParallelSearch(
   clCheck(clReleaseMemObject(dev_hit_h2_candidates));
 
   free(atomics);
-
-  if (devices != NULL) {
-    free(devices);
-    devices = NULL;
-  }
+  free(devices);
 
   return 0;
 }
@@ -317,9 +320,10 @@ int invokeParallelSearch(
  * @param tracks      
  * @param trackNumber 
  */
-void printTrack(Track* tracks, const int trackNumber, const std::map<int, int>& zhit_to_module){
+void printTrack(Track* tracks, const int trackNumber,
+  const std::map<int, int>& zhit_to_module, std::ofstream& outstream){
   const Track t = tracks[trackNumber];
-  DEBUG << "Track #" << trackNumber << ", length " << (int) t.hitsNum << std::endl;
+  outstream << "Track #" << trackNumber << ", length " << (int) t.hitsNum << std::endl;
 
   for(int i=0; i<t.hitsNum; ++i){
     const int hitNumber = t.hits[i];
@@ -329,14 +333,14 @@ void printTrack(Track* tracks, const int trackNumber, const std::map<int, int>& 
     const float z = h_hit_Zs[hitNumber];
     const int module = zhit_to_module.at((int) z);
 
-    DEBUG << " " << std::setw(8) << id << " (" << hitNumber << ")"
+    outstream << " " << std::setw(8) << id << " (" << hitNumber << ")"
       << " module " << std::setw(2) << module
       << ", x " << std::setw(6) << x
       << ", y " << std::setw(6) << y
       << ", z " << std::setw(6) << z << std::endl;
   }
 
-  DEBUG << std::endl;
+  outstream << std::endl;
 }
 
 /**
@@ -346,8 +350,9 @@ void printTrack(Track* tracks, const int trackNumber, const std::map<int, int>& 
  * @return                sensor number
  */
 int findClosestModule(const int z, const std::map<int, int>& zhit_to_module){
-  if (zhit_to_module.find(z) != zhit_to_module.end())
-    return zhit_to_module.at(z);
+  auto it = zhit_to_module.find(z);
+  if (it != zhit_to_module.end())
+    return it->second;
 
   int error = 0;
   while(true){
@@ -355,11 +360,14 @@ int findClosestModule(const int z, const std::map<int, int>& zhit_to_module){
     const int lowerAttempt = z - error;
     const int higherAttempt = z + error;
 
-    if (zhit_to_module.find(lowerAttempt) != zhit_to_module.end()){
-      return zhit_to_module.at(lowerAttempt);
+    auto it_lowerAttempt = zhit_to_module.find(lowerAttempt);
+    if (it_lowerAttempt != zhit_to_module.end()){
+      return it_lowerAttempt->second;
     }
-    if (zhit_to_module.find(higherAttempt) != zhit_to_module.end()){
-      return zhit_to_module.at(higherAttempt);
+
+    auto it_higherAttempt = zhit_to_module.find(higherAttempt);
+    if (it_higherAttempt != zhit_to_module.end()){
+      return it_higherAttempt->second;
     }
   }
 }
