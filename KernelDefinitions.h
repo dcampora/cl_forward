@@ -1,4 +1,11 @@
 
+// Used to prefer a device type over another one
+#define DEVICE_CPU 0
+#define DEVICE_GPU 1
+#define DEVICE_ACCELERATOR 2
+#define DEVICE_PREFERENCE DEVICE_GPU
+#define DEVICE_NUMBER 0
+
 #define NUMTHREADS_X 64
 #define MAX_NUMTHREADS_Y 16
 #define NUM_ATOMICS 5

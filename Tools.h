@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string>
 #include <fstream>
+#include "Logger.h"
 #include "Definitions.h"
 
 #define clCheck(stmt) { \
@@ -66,5 +67,7 @@ void clInitializeValue(cl_command_queue& commandQueue, cl_mem& param, size_t siz
     clCheck(clEnqueueWriteBuffer(commandQueue, param, CL_TRUE, 0, size * sizeof(T), temp, 0, NULL, NULL));
     free(temp);
 }
+
+void clChoosePlatform(cl_device_id*& devices, cl_platform_id& platform);
 
 #endif

@@ -240,3 +240,61 @@ switch(error){
     default: return "Unknown OpenCL error";
     }
 }
+
+void clChoosePlatform(cl_device_id*& devices, cl_platform_id& platform) {
+  // Choose the first available platform
+  cl_platform_id* clPlatformIDs;
+  cl_uint numPlatforms;
+  clCheck(clGetPlatformIDs(0, NULL, &numPlatforms));
+  if(numPlatforms > 0)
+  {
+    cl_platform_id* platforms = (cl_platform_id*) malloc(numPlatforms * sizeof(cl_platform_id));
+    clCheck(clGetPlatformIDs(numPlatforms, platforms, NULL));
+    platform = platforms[0];
+    free(platforms);
+  }
+
+  // Choose a device from the platform according to DEVICE_PREFERENCE
+  cl_uint numCpus = 0;
+  cl_uint numGpus = 0;
+  cl_uint numAccelerators = 0;
+  clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, 0, NULL, &numCpus);
+  clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 0, NULL, &numGpus);
+  clGetDeviceIDs(platform, CL_DEVICE_TYPE_ACCELERATOR, 0, NULL, &numAccelerators);
+  devices = (cl_device_id*) malloc(numAccelerators * sizeof(cl_device_id));
+
+  DEBUG << std::endl << "Devices available: " << std::endl
+    << "CPU: " << numCpus << std::endl
+    << "GPU: " << numGpus << std::endl
+    << "Accelerators: " << numAccelerators << std::endl;
+
+  if (DEVICE_PREFERENCE == DEVICE_CPU && numCpus > 0) {
+    DEBUG << "Choosing CPU" << std::endl;
+    clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, numCpus, devices, NULL));
+  }
+  else if (DEVICE_PREFERENCE == DEVICE_GPU && numGpus > 0) {
+    DEBUG << "Choosing GPU" << std::endl;
+    clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, numGpus, devices, NULL));
+  }
+  else if (DEVICE_PREFERENCE == DEVICE_ACCELERATOR && numAccelerators > 0) {
+    DEBUG << "Choosing accelerator" << std::endl;
+    clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ACCELERATOR, numAccelerators, devices, NULL));
+  }
+  else {
+    // We couldn't match the preference.
+    // Let's try the first device that appears available.
+    cl_uint numDevices = 0;
+    clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, NULL, &numDevices));
+    if (numDevices > 0) {
+      DEBUG << "Preference device couldn't be met" << std::endl
+            << "Choosing an available OpenCL capable device" << std::endl;
+      clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, numDevices, devices, NULL));
+    }
+    else {
+      DEBUG << "No OpenCL capable device detected" << std::endl
+            << "Check the drivers, OpenCL runtime or ICDs are available" << std::endl;
+      exit(-1);
+    }
+  }
+  DEBUG << std::endl;
+}

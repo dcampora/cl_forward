@@ -21,64 +21,22 @@ int invokeParallelSearch(
   const std::vector<uint8_t>* startingEvent_input = input[startingEvent];
   setHPointersFromInput((uint8_t*) &(*startingEvent_input)[0], startingEvent_input->size());
   int number_of_sensors = *h_no_sensors;
-
-  // Choose which GPU to run on, change this on a multi-GPU system.
-  const int device_number = 0;
   
   // Startup settings
   size_t global_work_size[2] = { (size_t) NUMTHREADS_X * eventsToProcess, 2 };
   size_t local_work_size[2] = { (size_t) NUMTHREADS_X, 2 };
   cl_uint work_dim = 2;
 
-  // Step 1: Getting platforms and choose an available one
-  cl_uint numPlatforms; // the NO. of platforms
-  cl_platform_id platform = NULL; // the chosen platform
-  clCheck(clGetPlatformIDs(0, NULL, &numPlatforms));
-
-  // For clarity, choose the first available platform.
-  if(numPlatforms > 0)
-  {
-    cl_platform_id* platforms = (cl_platform_id* )malloc(numPlatforms* sizeof(cl_platform_id));
-    clCheck(clGetPlatformIDs(numPlatforms, platforms, NULL));
-    platform = platforms[0];
-    free(platforms);
-  }
-
-  // Step 2: Query the platform and choose the first GPU device if has one.Otherwise use the CPU as device
-  cl_uint       numDevices = 0;
-  cl_device_id        *devices;
-  char deviceName [1024] = "CPU\0";
-
-  // Run on CPU - Don't try to poll for GPU devices
-  // DEBUG << "Using CPU as device" << std::endl;
-  // clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, 0, NULL, &numDevices));
-  // devices = (cl_device_id*) malloc(numDevices * sizeof(cl_device_id));
-  // clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, numDevices, devices, NULL));
-
-  // We don't check this call. If it fails, we use a CPU device
-  cl_int status_ids = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 0, NULL, &numDevices);
-  if (numDevices == 0) {
-    DEBUG << "No GPU device available." << std::endl;
-    DEBUG << "Choosing CPU as default device." << std::endl;
-    clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, 0, NULL, &numDevices));
-    devices = (cl_device_id*) malloc(numDevices * sizeof(cl_device_id));
-    clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, numDevices, devices, NULL));
-  }
-  else {
-    DEBUG << "Choosing GPU device" << std::endl;
-    devices = (cl_device_id*) malloc(numDevices * sizeof(cl_device_id));
-    clCheck(clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, numDevices, devices, NULL));
-  }
-  cl_platform_id* clPlatformIDs;
-  clPlatformIDs = (cl_platform_id*) malloc(numDevices * sizeof(cl_platform_id));
-  clCheck( clGetPlatformIDs(numDevices, clPlatformIDs, NULL) );
-  clCheck( clGetPlatformInfo (clPlatformIDs[0], CL_PLATFORM_NAME, sizeof(deviceName), deviceName, NULL) );
+  // Choose platform according to the macro DEVICE_PREFERENCE
+  cl_device_id* devices;
+  cl_platform_id platform = NULL;
+  clChoosePlatform(devices, platform);
 
   // Step 3: Create context
-  cl_context context = clCreateContext(NULL, 1, devices, NULL, NULL, NULL);
+  cl_context context = clCreateContext(NULL, 1, devices, NULL, NULL, &errcode_ret); checkClError(errcode_ret);
 
   // Step 4: Creating command queue associate with the context
-  cl_command_queue commandQueue = clCreateCommandQueue(context, devices[0], CL_QUEUE_PROFILING_ENABLE, NULL);
+  cl_command_queue commandQueue = clCreateCommandQueue(context, devices[DEVICE_NUMBER], CL_QUEUE_PROFILING_ENABLE, NULL);
 
   // Step 5: Create program object - KernelDefinitions.h + Kernel.cl
   std::string definitions_str, kernel_str, source_str;
@@ -100,9 +58,9 @@ int invokeParallelSearch(
 
     if (status == CL_BUILD_PROGRAM_FAILURE) {
       size_t log_size;
-      clGetProgramBuildInfo(program, devices[0], CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
+      clGetProgramBuildInfo(program, devices[DEVICE_NUMBER], CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
       char* log = (char *) malloc(log_size);
-      clGetProgramBuildInfo(program, devices[0], CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
+      clGetProgramBuildInfo(program, devices[DEVICE_NUMBER], CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
       std::cerr << "Build log: " << std::endl << log << std::endl;
     }
 
@@ -110,7 +68,7 @@ int invokeParallelSearch(
   }
 
   size_t size;
-  clCheck(clGetProgramBuildInfo(program, devices[0], CL_PROGRAM_BUILD_LOG , 0, NULL, &size));
+  clCheck(clGetProgramBuildInfo(program, devices[DEVICE_NUMBER], CL_PROGRAM_BUILD_LOG , 0, NULL, &size));
 
   // Step 7: Memory
   
@@ -177,13 +135,15 @@ int invokeParallelSearch(
   
   // Adding timing
   // Timing calculation
-  unsigned int niterations = 1;
-  unsigned int nexperiments = 1;
+  unsigned int niterations = 4;
+  unsigned int nexperiments = 4;
 
   std::vector<std::vector<float>> time_values {nexperiments};
   std::vector<std::map<std::string, float>> mresults {nexperiments};
 
-  // Get and log the OpenCL device ID's
+  // Get and log the OpenCL device name
+  char deviceName [1024];
+  clCheck(clGetDeviceInfo(devices[DEVICE_NUMBER], CL_DEVICE_NAME, 1024, deviceName, NULL));
   DEBUG << "Invoking kernels on your " << deviceName << std::endl;
 
   for (auto i=0; i<nexperiments; ++i) {
@@ -206,11 +166,13 @@ int invokeParallelSearch(
       clInitializeValue<cl_char>(commandQueue, dev_tracks, eventsToProcess * MAX_TRACKS * sizeof(Track), 0);
       clInitializeValue<cl_char>(commandQueue, dev_tracklets, acc_hits * sizeof(Track), 0);
       clInitializeValue<cl_int>(commandQueue, dev_tracks_to_follow, eventsToProcess * TTF_MODULO, 0);
+      clCheck(clFinish(commandQueue));
 
       cl_event kernelEvent;
 
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel, work_dim, NULL, global_work_size, local_work_size, 0, NULL, &kernelEvent));
-      clCheck(clFinish(commandQueue));
+      // clCheck(clFinish(commandQueue));
+      clCheck(clWaitForEvents(1 , &kernelEvent));
   
       // Start and end of event
       unsigned long tstart = 0;

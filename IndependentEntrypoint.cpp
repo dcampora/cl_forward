@@ -182,20 +182,6 @@ int main(int argc, char *argv[])
 
     // Print out first byte from formatter->inputPointer
     std::cout << input.size() << " files read" << std::endl;
-    // std::cout << "Sizes: ";
-    // for (int i=0; i<input.size(); ++i){
-    //     std::cout << input[i].size();
-    //     if (i != input.size()-1) std::cout << ", ";
-    // }
-
-    // std::cout << std::endl << "Pointers: " << std::hex;
-    // for (int i=0; i<input.size(); ++i){
-    //     std::cout << "0x" << (long long int) &(input[i][0]);
-    //     if (i != input.size()-1) std::cout << ", ";
-    // }
-    // std::cout << std::dec;
-
-    std::cout << std::endl << "Kernel execution invoked..." << std::endl << std::endl;
 
     // Call offloaded algo
     std::vector<std::vector<unsigned char> > output;
