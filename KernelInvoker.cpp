@@ -50,7 +50,7 @@ int invokeParallelSearch(
   // Step 6: Build program
   const char* buildOptions = "";
   // const char* buildOptions = "-cl-nv-maxrregcount=32";
-  // const char* buildOptions = "-g -s /home/dcampora/nfs/projects/gpu/tf_opencl/KernelDefinitions.cl -s /home/dcampora/nfs/projects/gpu/tf_opencl/Kernel.cl"; 
+  // const char* buildOptions = "-g -s /home/dcampora/nfs/projects/gpu/tf_opencl/KernelDefinitions.cl -s /home/dcampora/nfs/projects/gpu/tf_opencl/Kernel.cl";
   cl_int status = clBuildProgram(program, 1, devices, buildOptions, NULL, NULL);
 
   if (status != CL_SUCCESS) {
@@ -106,6 +106,9 @@ int invokeParallelSearch(
   cl_mem dev_best_fits = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * NUMTHREADS_X * MAX_NUMTHREADS_Y * sizeof(cl_float), NULL, &errcode_ret); checkClError(errcode_ret);
   cl_mem dev_hit_candidates = clCreateBuffer(context, CL_MEM_READ_WRITE, 2 * acc_hits * sizeof(cl_int), NULL, &errcode_ret); checkClError(errcode_ret);
   cl_mem dev_hit_h2_candidates = clCreateBuffer(context, CL_MEM_READ_WRITE, 2 * acc_hits * sizeof(cl_int), NULL, &errcode_ret); checkClError(errcode_ret);
+
+  // Fit buffers
+  cl_mem dev_track_parameters = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * MAX_TRACKS * sizeof(TrackParameters), NULL, &errcode_ret); checkClError(errcode_ret);
 
   clCheck(clEnqueueWriteBuffer(commandQueue, dev_event_offsets, CL_TRUE, 0, event_offsets.size() * sizeof(cl_int), &event_offsets[0], 0, NULL, NULL));
   clCheck(clEnqueueWriteBuffer(commandQueue, dev_hit_offsets, CL_TRUE, 0, hit_offsets.size() * sizeof(cl_int), &hit_offsets[0], 0, NULL, NULL));
@@ -163,10 +166,10 @@ int invokeParallelSearch(
       clInitializeValue<cl_int>(commandQueue, dev_hit_h2_candidates, 2 * acc_hits, -1);
 
       // Just for debugging
-      clInitializeValue<cl_char>(commandQueue, dev_tracks, eventsToProcess * MAX_TRACKS * sizeof(Track), 0);
-      clInitializeValue<cl_char>(commandQueue, dev_tracklets, acc_hits * sizeof(Track), 0);
-      clInitializeValue<cl_int>(commandQueue, dev_tracks_to_follow, eventsToProcess * TTF_MODULO, 0);
-      clCheck(clFinish(commandQueue));
+      // clInitializeValue<cl_char>(commandQueue, dev_tracks, eventsToProcess * MAX_TRACKS * sizeof(Track), 0);
+      // clInitializeValue<cl_char>(commandQueue, dev_tracklets, acc_hits * sizeof(Track), 0);
+      // clInitializeValue<cl_int>(commandQueue, dev_tracks_to_follow, eventsToProcess * TTF_MODULO, 0);
+      // clCheck(clFinish(commandQueue));
 
       cl_event kernelEvent;
 
@@ -188,11 +191,57 @@ int invokeParallelSearch(
       time_values[i].push_back(tduration / 1000000.0f);
 
       DEBUG << "." << std::flush;
+
+      // Fit program
+      // Creating the program
+      std::string fit_str;
+      clCheck(convertClToString("Fit.cl", fit_str));
+      source_str = definitions_str + fit_str;
+      source = source_str.c_str();
+      sourceSize[] = { source_str.size() };
+      program = clCreateProgramWithSource(context, 1, &source, sourceSize, NULL);
+
+      // Build program
+      status = clBuildProgram(program, 1, devices, buildOptions, NULL, NULL);
+      if (status != CL_SUCCESS) {
+        std::cerr << "Error string: " << getErrorString(status) << std::endl;
+
+        if (status == CL_BUILD_PROGRAM_FAILURE) {
+          size_t log_size;
+          clGetProgramBuildInfo(program, devices[DEVICE_NUMBER], CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
+          char* log = (char *) malloc(log_size);
+          clGetProgramBuildInfo(program, devices[DEVICE_NUMBER], CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
+          std::cerr << "Build log: " << std::endl << log << std::endl;
+        }
+        exit(-1);
+      }
+
+      // Create kernel, set kernel arguments
+      cl_kernel fit_kernel = clCreateKernel(program, "fitTracks", NULL);
+
+      clCheck(clSetKernelArg(fit_kernel, 0, sizeof(cl_mem), (void *) &dev_input));
+      clCheck(clSetKernelArg(fit_kernel, 1, sizeof(cl_mem), (void *) &dev_event_offsets));
+      clCheck(clSetKernelArg(fit_kernel, 2, sizeof(cl_mem), (void *) &dev_tracks));
+      clCheck(clSetKernelArg(fit_kernel, 3, sizeof(cl_mem), (void *) &dev_track_parameters));
+      clCheck(clSetKernelArg(fit_kernel, 4, sizeof(cl_mem), (void *) &dev_atomicsStorage));
+
+      // Setup call parameters
+      size_t fit_global_work_size[1] = { (size_t) NUMTHREADS_X * eventsToProcess };
+      size_t fit_local_work_size[1] = { (size_t) NUMTHREADS_X };
+      cl_uint fit_work_dim = 1;
+
+      // Call kernel
+      clCheck(clEnqueueNDRangeKernel(commandQueue, fit_kernel, work_dim, NULL, fit_global_work_size, fit_local_work_size, 0, NULL, &kernelEvent));
+
+      DEBUG << "." << std::endl;
     }
     DEBUG << std::endl;
   }
 
   // Step 11: Get results
+  // TODO: Fix output_tp
+  std::vector<std::vector<TrackParameters>> output_tp (eventsToProcess);
+
   if (PRINT_SOLUTION) DEBUG << "Number of tracks found per event:" << std::endl << " ";
   clCheck(clEnqueueReadBuffer(commandQueue, dev_atomicsStorage, CL_TRUE, 0, eventsToProcess * atomic_space * sizeof(int), atomics, 0, NULL, NULL));
   for (int i=0; i<eventsToProcess; ++i){
@@ -200,8 +249,10 @@ int invokeParallelSearch(
     if (PRINT_SOLUTION) DEBUG << numberOfTracks << ", ";
     
     output[startingEvent + i].resize(numberOfTracks * sizeof(Track));
+    output_tp[startingEvent + i].resize(numberOfTracks * sizeof(TrackParameters));
     if (numberOfTracks > 0) {
       clCheck(clEnqueueReadBuffer(commandQueue, dev_tracks, CL_TRUE, i * MAX_TRACKS * sizeof(Track), numberOfTracks * sizeof(Track), &(output[startingEvent + i])[0], 0, NULL, NULL));
+      clCheck(clEnqueueReadBuffer(commandQueue, dev_track_parameters, CL_TRUE, i * MAX_TRACKS * sizeof(TrackParameters), numberOfTracks * sizeof(TrackParameters), &(output_tp[startingEvent + i])[0], 0, NULL, NULL));
     }
   }
   if (PRINT_SOLUTION) DEBUG << std::endl;
@@ -234,9 +285,10 @@ int invokeParallelSearch(
       // Print to output file with event no.
       const int numberOfTracks = output[i].size() / sizeof(Track);
       Track* tracks_in_solution = (Track*) &(output[startingEvent + i])[0];
+      TrackParameters* tp_in_solution = (TrackParameters*) &(output_tp[startingEvent + i])[0];
       std::ofstream outfile (std::string(RESULTS_FOLDER) + std::string("/") + toString(i) + std::string(".out"));
       for(int j=0; j<numberOfTracks; ++j){
-        printTrack(tracks_in_solution, j, zhit_to_module, outfile);
+        printTrack(tracks_in_solution, j, zhit_to_module, outfile, tp_in_solution);
       }
       outfile.close();
     }
@@ -283,9 +335,12 @@ int invokeParallelSearch(
  * @param trackNumber 
  */
 void printTrack(Track* tracks, const int trackNumber,
-  const std::map<int, int>& zhit_to_module, std::ofstream& outstream){
+  const std::map<int, int>& zhit_to_module, std::ofstream& outstream,
+  TrackParameters* tp){
   const Track t = tracks[trackNumber];
+  const TrackParameters tp = tp[trackNumber];
   outstream << "Track #" << trackNumber << ", length " << (int) t.hitsNum << std::endl;
+  outstream << " Track parameters: " << tp.x0 << ", " << tp.y0 << ", " << tp.tx << ", " << tp.ty << std::endl;
 
   for(int i=0; i<t.hitsNum; ++i){
     const int hitNumber = t.hits[i];

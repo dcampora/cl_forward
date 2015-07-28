@@ -57,6 +57,7 @@ const char *getErrorString (cl_int error);
 
 template <class T>
 void clInitializeValue(cl_command_queue& commandQueue, cl_mem& param, size_t size, T value) {
+    // Try with std::vector
     T* temp;
     if (value == 0) temp = (T*) calloc(size, sizeof(T));
     else {

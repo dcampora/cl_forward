@@ -34,8 +34,8 @@
 #define SENSOR_DATA_HITNUMS 3
 #define RESULTS_FOLDER "results"
 
-#define PRINT_SOLUTION false
-#define PRINT_VERBOSE false
+#define PRINT_SOLUTION true
+#define PRINT_VERBOSE true
 #define ASSERTS_ENABLED false
 
 #if ASSERTS_ENABLED == true
@@ -59,4 +59,11 @@ struct Hit {
 struct Track { // 4 + 24 * 4 = 100 B
     unsigned int hitsNum;
     unsigned int hits[MAX_TRACK_SIZE];
+};
+
+struct TrackParameters {
+    float x0;
+    float y0;
+    float tx;
+    float ty;
 };

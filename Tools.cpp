@@ -111,7 +111,7 @@ std::map<std::string, float> calcResults(std::vector<float>& times){
 void checkClError(const cl_int errcode_ret) {
   // CHECK_OPENCL_ERROR(errcode_ret, "Error ");
   if (errcode_ret != CL_SUCCESS) {
-    std::cerr << "Error " << errcode_ret << std::endl;
+    std::cerr << "Error " << getErrorString(errcode_ret) << std::endl;
     exit(-1);
   }
 }
