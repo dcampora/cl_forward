@@ -23,6 +23,7 @@
 #define TTF_MODULO 2000
 
 #define PARAM_W 3966.94f // 0.050 / sqrt( 12. )
+#define PARAM_W_INVERTED 0.000252083f
 #define PARAM_MAXXSLOPE 0.4f
 #define PARAM_MAXYSLOPE 0.3f
 #define PARAM_MAXXSLOPE_CANDIDATES 0.4f
@@ -61,9 +62,19 @@ struct Track { // 4 + 24 * 4 = 100 B
     unsigned int hits[MAX_TRACK_SIZE];
 };
 
+struct Covariance {
+  float c00, c20, c22, c11, c31, c33;
+};
+
 struct TrackParameters {
-    float x0;
-    float y0;
-    float tx;
-    float ty;
+  float x0, y0, tx, ty;
+  struct Covariance cov;
+  float zbeam;
+  bool backward;
+};
+
+struct FitKalmanTrackParameters {
+  float x, y, z, tx, ty;
+  struct Covariance cov;
+  float chi2;
 };

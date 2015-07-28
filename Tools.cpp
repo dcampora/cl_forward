@@ -84,15 +84,15 @@ void setHPointersFromInput(uint8_t * input, size_t size){
 std::map<std::string, float> calcResults(std::vector<float>& times){
     // sqrt ( E( (X - m)2) )
     std::map<std::string, float> results;
-    float deviation = 0.0f, variance = 0.0f, mean = 0.0f, min = MAX_FLOAT, max = 0.0f;
+    float deviation = 0.0f, variance = 0.0f, mean = 0.0f, min_value = MAX_FLOAT, max_value = 0.0f;
 
     for(auto it = times.begin(); it != times.end(); it++){
         const float seconds = (*it);
         mean += seconds;
         variance += seconds * seconds;
 
-        if (seconds < min) min = seconds;
-        if (seconds > max) max = seconds;
+        if (seconds < min_value) min_value = seconds;
+        if (seconds > max_value) max_value = seconds;
     }
 
     mean /= times.size();
@@ -102,8 +102,8 @@ std::map<std::string, float> calcResults(std::vector<float>& times){
     results["variance"] = variance;
     results["deviation"] = deviation;
     results["mean"] = mean;
-    results["min"] = min;
-    results["max"] = max;
+    results["min"] = min_value;
+    results["max"] = max_value;
 
     return results;
 }

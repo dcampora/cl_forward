@@ -17,7 +17,7 @@
 set( SAMPLE_NAME clpixel )
 set( SOURCE_FILES Tools.cpp Logger.cpp KernelInvoker.cpp
 GpuPixelSearchByTriplet.cpp IndependentEntrypoint.cpp )
-set( EXTRA_FILES Kernel.cl KernelDefinitions.h Fits.cl )
+set( EXTRA_FILES Kernel.cl KernelDefinitions.h FitCovariance.cl FitKalman.cl )
 
 ############################################################################
 

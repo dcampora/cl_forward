@@ -109,6 +109,8 @@ int invokeParallelSearch(
 
   // Fit buffers
   cl_mem dev_track_parameters = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * MAX_TRACKS * sizeof(TrackParameters), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_fktp_upstream = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * MAX_TRACKS * sizeof(FitKalmanTrackParameters), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_fktp_downstream = clCreateBuffer(context, CL_MEM_READ_WRITE, eventsToProcess * MAX_TRACKS * sizeof(FitKalmanTrackParameters), NULL, &errcode_ret); checkClError(errcode_ret);
 
   clCheck(clEnqueueWriteBuffer(commandQueue, dev_event_offsets, CL_TRUE, 0, event_offsets.size() * sizeof(cl_int), &event_offsets[0], 0, NULL, NULL));
   clCheck(clEnqueueWriteBuffer(commandQueue, dev_hit_offsets, CL_TRUE, 0, hit_offsets.size() * sizeof(cl_int), &hit_offsets[0], 0, NULL, NULL));
@@ -138,8 +140,8 @@ int invokeParallelSearch(
   
   // Adding timing
   // Timing calculation
-  unsigned int niterations = 4;
-  unsigned int nexperiments = 4;
+  unsigned int niterations = 1;
+  unsigned int nexperiments = 1;
 
   std::vector<std::vector<float>> time_values {nexperiments};
   std::vector<std::map<std::string, float>> mresults {nexperiments};
@@ -192,14 +194,17 @@ int invokeParallelSearch(
 
       DEBUG << "." << std::flush;
 
+      //////////////////////////////////////////
       // Fit program
+      //////////////////////////////////////////
       // Creating the program
       std::string fit_str;
-      clCheck(convertClToString("Fit.cl", fit_str));
-      source_str = definitions_str + fit_str;
-      source = source_str.c_str();
-      sourceSize[] = { source_str.size() };
-      program = clCreateProgramWithSource(context, 1, &source, sourceSize, NULL);
+      clCheck(convertClToString("FitCovariance.cl", fit_str));
+      // std::string fit_source_str = definitions_str + fit_str;
+      std::string fit_source_str = fit_str;
+      const char* fit_source = fit_source_str.c_str();
+      size_t fit_sourceSize[] = { fit_source_str.size() };
+      program = clCreateProgramWithSource(context, 1, &fit_source, fit_sourceSize, NULL);
 
       // Build program
       status = clBuildProgram(program, 1, devices, buildOptions, NULL, NULL);
@@ -231,9 +236,82 @@ int invokeParallelSearch(
       cl_uint fit_work_dim = 1;
 
       // Call kernel
-      clCheck(clEnqueueNDRangeKernel(commandQueue, fit_kernel, work_dim, NULL, fit_global_work_size, fit_local_work_size, 0, NULL, &kernelEvent));
+      clCheck(clEnqueueNDRangeKernel(commandQueue, fit_kernel, fit_work_dim, NULL, fit_global_work_size, fit_local_work_size, 0, NULL, &kernelEvent));
 
       DEBUG << "." << std::endl;
+
+      //////////////////////////////////////////
+      // Optional FitKalman program
+      //////////////////////////////////////////
+      const bool calculate_upstream = true;
+      const bool calculate_downstream = true;
+
+      // Apply the conditional in the real example
+      // calculate_upstream = m_stateClosestToBeamKalmanFit || m_addStateFirstLastMeasurementKalmanFit;
+      // // Note:
+      // // (!backward && m_stateEndVeloKalmanFit) || m_addStateFirstLastMeasurementKalmanFit
+      // // If the following is false, it will not be executed.
+      // // If it is true, for the moment it will always be executed
+      // // (a conditional execution is possible, has to be evaluated)
+      // calculate_downstream = m_addStateFirstLastMeasurementKalmanFit || m_stateEndVeloKalmanFit;
+      
+      for (int k=0; k<2; ++k) {
+        const bool is_upstream = k==0;
+        const int cl_is_upstream = is_upstream;
+        if ((is_upstream && calculate_upstream) || (!is_upstream && calculate_downstream)) {
+          cl_mem dev_fit_kalman_track_parameters = is_upstream ? dev_fktp_upstream : dev_fktp_downstream;
+
+          // Puppet parameters
+          int direction = 2;
+          float noise2PerLayer = 0.2f;
+
+          // For the moment, do also the kalmanfit with some options (testing)
+          // Creating the program
+          std::string fit_kalman_str;
+          clCheck(convertClToString("FitKalman.cl", fit_kalman_str));
+          // std::string fit_source_str = definitions_str + fit_str;
+          std::string fit_kalman_source_str = fit_kalman_str;
+          const char* fit_kalman_source = fit_kalman_source_str.c_str();
+          size_t fit_kalman_sourceSize[] = { fit_kalman_source_str.size() };
+          program = clCreateProgramWithSource(context, 1, &fit_kalman_source, fit_kalman_sourceSize, NULL);
+
+          // Build program
+          status = clBuildProgram(program, 1, devices, buildOptions, NULL, NULL);
+          if (status != CL_SUCCESS) {
+            std::cerr << "Error string: " << getErrorString(status) << std::endl;
+
+            if (status == CL_BUILD_PROGRAM_FAILURE) {
+              size_t log_size;
+              clGetProgramBuildInfo(program, devices[DEVICE_NUMBER], CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
+              char* log = (char *) malloc(log_size);
+              clGetProgramBuildInfo(program, devices[DEVICE_NUMBER], CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
+              std::cerr << "Build log: " << std::endl << log << std::endl;
+            }
+            exit(-1);
+          }
+
+          // Create kernel, set kernel arguments
+          cl_kernel fit_kalman_kernel = clCreateKernel(program, "fitKalmanTracks", NULL);
+
+          clCheck(clSetKernelArg(fit_kalman_kernel, 0, sizeof(cl_mem), (void *) &dev_input));
+          clCheck(clSetKernelArg(fit_kalman_kernel, 1, sizeof(cl_mem), (void *) &dev_event_offsets));
+          clCheck(clSetKernelArg(fit_kalman_kernel, 2, sizeof(cl_mem), (void *) &dev_tracks));
+          clCheck(clSetKernelArg(fit_kalman_kernel, 3, sizeof(cl_mem), (void *) &dev_track_parameters));
+          clCheck(clSetKernelArg(fit_kalman_kernel, 4, sizeof(cl_mem), (void *) &dev_atomicsStorage));
+          clCheck(clSetKernelArg(fit_kalman_kernel, 5, sizeof(cl_mem), (void *) &dev_fit_kalman_track_parameters));
+          clCheck(clSetKernelArg(fit_kalman_kernel, 6, sizeof(int), &cl_is_upstream));
+
+          // Setup call parameters
+          size_t fit_kalman_global_work_size[1] = { (size_t) NUMTHREADS_X * eventsToProcess };
+          size_t fit_kalman_local_work_size[1] = { (size_t) NUMTHREADS_X };
+          cl_uint fit_kalman_work_dim = 1;
+
+          // Call kernel
+          clCheck(clEnqueueNDRangeKernel(commandQueue, fit_kalman_kernel, fit_kalman_work_dim, NULL, fit_kalman_global_work_size, fit_kalman_local_work_size, 0, NULL, &kernelEvent));
+
+          DEBUG << "." << std::endl;
+        }
+      }
     }
     DEBUG << std::endl;
   }
@@ -241,6 +319,8 @@ int invokeParallelSearch(
   // Step 11: Get results
   // TODO: Fix output_tp
   std::vector<std::vector<TrackParameters>> output_tp (eventsToProcess);
+  std::vector<std::vector<TrackParameters>> output_fktp_u (eventsToProcess);
+  std::vector<std::vector<TrackParameters>> output_fktp_d (eventsToProcess);
 
   if (PRINT_SOLUTION) DEBUG << "Number of tracks found per event:" << std::endl << " ";
   clCheck(clEnqueueReadBuffer(commandQueue, dev_atomicsStorage, CL_TRUE, 0, eventsToProcess * atomic_space * sizeof(int), atomics, 0, NULL, NULL));
@@ -250,9 +330,14 @@ int invokeParallelSearch(
     
     output[startingEvent + i].resize(numberOfTracks * sizeof(Track));
     output_tp[startingEvent + i].resize(numberOfTracks * sizeof(TrackParameters));
+    output_fktp_u[startingEvent + i].resize(numberOfTracks * sizeof(FitKalmanTrackParameters));
+    output_fktp_d[startingEvent + i].resize(numberOfTracks * sizeof(FitKalmanTrackParameters));
+
     if (numberOfTracks > 0) {
       clCheck(clEnqueueReadBuffer(commandQueue, dev_tracks, CL_TRUE, i * MAX_TRACKS * sizeof(Track), numberOfTracks * sizeof(Track), &(output[startingEvent + i])[0], 0, NULL, NULL));
       clCheck(clEnqueueReadBuffer(commandQueue, dev_track_parameters, CL_TRUE, i * MAX_TRACKS * sizeof(TrackParameters), numberOfTracks * sizeof(TrackParameters), &(output_tp[startingEvent + i])[0], 0, NULL, NULL));
+      clCheck(clEnqueueReadBuffer(commandQueue, dev_fktp_upstream, CL_TRUE, i * MAX_TRACKS * sizeof(FitKalmanTrackParameters), numberOfTracks * sizeof(FitKalmanTrackParameters), &(output_fktp_u[startingEvent + i])[0], 0, NULL, NULL));
+      clCheck(clEnqueueReadBuffer(commandQueue, dev_fktp_downstream, CL_TRUE, i * MAX_TRACKS * sizeof(FitKalmanTrackParameters), numberOfTracks * sizeof(FitKalmanTrackParameters), &(output_fktp_d[startingEvent + i])[0], 0, NULL, NULL));
     }
   }
   if (PRINT_SOLUTION) DEBUG << std::endl;
@@ -286,9 +371,12 @@ int invokeParallelSearch(
       const int numberOfTracks = output[i].size() / sizeof(Track);
       Track* tracks_in_solution = (Track*) &(output[startingEvent + i])[0];
       TrackParameters* tp_in_solution = (TrackParameters*) &(output_tp[startingEvent + i])[0];
+      FitKalmanTrackParameters* fktp_u_in_solution = (FitKalmanTrackParameters*) &(output_fktp_u[startingEvent + i])[0];
+      FitKalmanTrackParameters* fktp_d_in_solution = (FitKalmanTrackParameters*) &(output_fktp_d[startingEvent + i])[0];
+
       std::ofstream outfile (std::string(RESULTS_FOLDER) + std::string("/") + toString(i) + std::string(".out"));
       for(int j=0; j<numberOfTracks; ++j){
-        printTrack(tracks_in_solution, j, zhit_to_module, outfile, tp_in_solution);
+        printTrack(tracks_in_solution, j, zhit_to_module, outfile, tp_in_solution, fktp_u_in_solution, fktp_d_in_solution);
       }
       outfile.close();
     }
@@ -334,15 +422,45 @@ int invokeParallelSearch(
  * @param tracks      
  * @param trackNumber 
  */
+
+
+// struct FitKalmanTrackParameters {
+//   float x, y, z, tx, ty;
+//   struct Covariance cov;
+//   float chi2;
+// };
+
+
 void printTrack(Track* tracks, const int trackNumber,
   const std::map<int, int>& zhit_to_module, std::ofstream& outstream,
-  TrackParameters* tp){
+  TrackParameters* track_parameters, FitKalmanTrackParameters* track_fktp_u,
+  FitKalmanTrackParameters* track_fktp_d)
+{
   const Track t = tracks[trackNumber];
-  const TrackParameters tp = tp[trackNumber];
-  outstream << "Track #" << trackNumber << ", length " << (int) t.hitsNum << std::endl;
-  outstream << " Track parameters: " << tp.x0 << ", " << tp.y0 << ", " << tp.tx << ", " << tp.ty << std::endl;
+  const TrackParameters tp = track_parameters[trackNumber];
+  const FitKalmanTrackParameters fktp_u = track_fktp_u[trackNumber];
+  const FitKalmanTrackParameters fktp_d = track_fktp_d[trackNumber];
 
-  for(int i=0; i<t.hitsNum; ++i){
+  outstream << "Track #" << trackNumber << ", length " << (int) t.hitsNum << std::endl;
+  
+  outstream << " Track parameters: " << tp.x0 << ", " << tp.y0 << ", " << tp.tx << ", " << tp.ty << std::endl;
+  outstream << " Covariance: " << tp.cov.c00 << ", " << tp.cov.c20 << ", " << tp.cov.c22 << ", "
+    << tp.cov.c11 << ", " << tp.cov.c31 << ", " << tp.cov.c33 << std::endl;
+  outstream << " zbeam: " << tp.zbeam << std::endl;
+  
+  outstream << " KFit upstream: " << fktp_u.x << ", " << fktp_u.y << ", " << fktp_u.z << ", "
+    << fktp_u.tx << ", " << fktp_u.ty << std::endl;
+  outstream << " Covariance: " << fktp_u.cov.c00 << ", " << fktp_u.cov.c20 << ", " << fktp_u.cov.c22 << ", "
+    << fktp_u.cov.c11 << ", " << fktp_u.cov.c31 << ", " << fktp_u.cov.c33 << std::endl;
+  outstream << " chi2: " << fktp_u.chi2 << std::endl;
+
+  outstream << " KFit downstream: " << fktp_d.x << ", " << fktp_d.y << ", " << fktp_d.z << ", "
+    << fktp_d.tx << ", " << fktp_d.ty << std::endl;
+  outstream << " Covariance: " << fktp_d.cov.c00 << ", " << fktp_d.cov.c20 << ", " << fktp_d.cov.c22 << ", "
+    << fktp_d.cov.c11 << ", " << fktp_d.cov.c31 << ", " << fktp_d.cov.c33 << std::endl;
+  outstream << " chi2: " << fktp_d.chi2 << std::endl;
+
+  for(int i=0; i<t.hitsNum; ++i) {
     const int hitNumber = t.hits[i];
     const unsigned int id = h_hit_IDs[hitNumber];
     const float x = h_hit_Xs[hitNumber];
