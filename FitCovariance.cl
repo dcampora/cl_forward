@@ -85,14 +85,14 @@ struct TrackParameters {
 void fit(__global const float* const hit_Xs,
   __global const float* const hit_Ys,
   __global const float* const hit_Zs,
-  __global struct CL_Track* const tracks,
+  __global struct Track* const tracks,
   const int trackno,
-  __global struct CL_TrackParameters* const track_parameters)
+  __global struct TrackParameters* const track_parameters)
 {
   //=========================================================================
   // Compute the track parameters
   //=========================================================================
-  struct CL_TrackParameters tp;
+  struct TrackParameters tp;
   float s0, sx, sz, sxz, sz2;
   float u0, uy, uz, uyz, uz2;
   float sum_xxw = 0.0f, sum_yyw = 0.0f;
@@ -100,7 +100,7 @@ void fit(__global const float* const hit_Xs,
   u0 = uy = uz = uyz = uz2 = 0.0f;
   
   // Iterate over the hits, and fit
-  struct CL_Track t = tracks[trackno];
+  struct Track t = tracks[trackno];
 
   for (int h=0; h<t.hitsNum; ++h) {
     const int hitno = t.hits[h];
@@ -212,8 +212,8 @@ void fit(__global const float* const hit_Xs,
 __kernel void fitTracks(
   __global const char* const dev_input,
   __global int* const dev_event_offsets,
-  __global struct CL_Track* const dev_tracks,
-  __global struct CL_TrackParameters* const dev_track_parameters,
+  __global struct Track* const dev_tracks,
+  __global struct TrackParameters* const dev_track_parameters,
   __global int* const dev_atomicsStorage)
 {
   // Data initialization
@@ -237,8 +237,8 @@ __kernel void fitTracks(
   __global const float* const hit_Zs = (__global const float*) (hit_Ys + number_of_hits);
 
   // Per event datatypes
-  __global struct CL_Track* tracks = dev_tracks + tracks_offset;
-  __global struct CL_TrackParameters* track_parameters = dev_track_parameters + tracks_offset;
+  __global struct Track* tracks = dev_tracks + tracks_offset;
+  __global struct TrackParameters* track_parameters = dev_track_parameters + tracks_offset;
 
   // We will process n tracks with m threads (workers)
   const int number_of_tracks = dev_atomicsStorage[event_number];
