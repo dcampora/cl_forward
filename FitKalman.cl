@@ -67,7 +67,7 @@ struct Covariance {
 };
 
 struct TrackParameters {
-  float x0, y0, tx, ty;
+  float x0, y0, tx, ty, chi2;
   struct Covariance cov;
   float zbeam;
   bool backward;
@@ -138,13 +138,13 @@ void fitKalman(__global const float* const hit_Xs,
   __global struct Track* const tracks,
   const int trackno,
   __global struct TrackParameters* const track_parameters,
-  __global struct CL_FitKalmanTrackParameters* const fit_kalman_track_parameters,
+  __global struct FitKalmanTrackParameters* const fit_kalman_track_parameters,
   const int is_upstream)
 {
   // We do assume it is ordered by Z, as it is
   struct Track t = tracks[trackno];
   struct TrackParameters tp = track_parameters[trackno];
-  struct CL_FitKalmanTrackParameters fktp;
+  struct FitKalmanTrackParameters fktp;
 
   // Parameters are calculated here
   const int direction = (tp.backward ? 1 : -1) * (is_upstream==1 ? 1 : -1);
@@ -238,7 +238,7 @@ __kernel void fitKalmanTracks(
   __global struct Track* const dev_tracks,
   __global struct TrackParameters* const dev_track_parameters,
   __global int* const dev_atomicsStorage,
-  __global struct CL_FitKalmanTrackParameters* const dev_fit_kalman_track_parameters,
+  __global struct FitKalmanTrackParameters* const dev_fit_kalman_track_parameters,
   const int is_upstream)
 {
   // Data initialization
@@ -264,7 +264,7 @@ __kernel void fitKalmanTracks(
   // Per event datatypes
   __global struct Track* tracks = dev_tracks + tracks_offset;
   __global struct TrackParameters* track_parameters = dev_track_parameters + tracks_offset;
-  __global struct CL_FitKalmanTrackParameters* fit_kalman_track_parameters = dev_fit_kalman_track_parameters + tracks_offset;
+  __global struct FitKalmanTrackParameters* fit_kalman_track_parameters = dev_fit_kalman_track_parameters + tracks_offset;
 
   // We will process n tracks with m threads (workers)
   const int number_of_tracks = dev_atomicsStorage[event_number];

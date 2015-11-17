@@ -67,7 +67,7 @@ struct Covariance {
 };
 
 struct TrackParameters {
-  float x0, y0, tx, ty;
+  float x0, y0, tx, ty, chi2;
   struct Covariance cov;
   float zbeam;
   bool backward;
