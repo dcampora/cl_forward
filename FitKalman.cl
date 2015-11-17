@@ -135,15 +135,15 @@ float filter(
 void fitKalman(__global const float* const hit_Xs,
   __global const float* const hit_Ys,
   __global const float* const hit_Zs,
-  __global struct CL_Track* const tracks,
+  __global struct Track* const tracks,
   const int trackno,
-  __global struct CL_TrackParameters* const track_parameters,
+  __global struct TrackParameters* const track_parameters,
   __global struct CL_FitKalmanTrackParameters* const fit_kalman_track_parameters,
   const int is_upstream)
 {
   // We do assume it is ordered by Z, as it is
-  struct CL_Track t = tracks[trackno];
-  struct CL_TrackParameters tp = track_parameters[trackno];
+  struct Track t = tracks[trackno];
+  struct TrackParameters tp = track_parameters[trackno];
   struct CL_FitKalmanTrackParameters fktp;
 
   // Parameters are calculated here
@@ -235,8 +235,8 @@ void fitKalman(__global const float* const hit_Xs,
 __kernel void fitKalmanTracks(
   __global const char* const dev_input,
   __global int* const dev_event_offsets,
-  __global struct CL_Track* const dev_tracks,
-  __global struct CL_TrackParameters* const dev_track_parameters,
+  __global struct Track* const dev_tracks,
+  __global struct TrackParameters* const dev_track_parameters,
   __global int* const dev_atomicsStorage,
   __global struct CL_FitKalmanTrackParameters* const dev_fit_kalman_track_parameters,
   const int is_upstream)
@@ -262,8 +262,8 @@ __kernel void fitKalmanTracks(
   __global const float* const hit_Zs = (__global const float*) (hit_Ys + number_of_hits);
 
   // Per event datatypes
-  __global struct CL_Track* tracks = dev_tracks + tracks_offset;
-  __global struct CL_TrackParameters* track_parameters = dev_track_parameters + tracks_offset;
+  __global struct Track* tracks = dev_tracks + tracks_offset;
+  __global struct TrackParameters* track_parameters = dev_track_parameters + tracks_offset;
   __global struct CL_FitKalmanTrackParameters* fit_kalman_track_parameters = dev_fit_kalman_track_parameters + tracks_offset;
 
   // We will process n tracks with m threads (workers)
