@@ -85,26 +85,28 @@ struct TrackParameters {
 void fit(__global const float* const hit_Xs,
   __global const float* const hit_Ys,
   __global const float* const hit_Zs,
-  __global struct Track* const tracks,
+  __global struct CL_Track* const tracks,
   const int trackno,
-  __global struct TrackParameters* const track_parameters)
+  __global struct CL_TrackParameters* const track_parameters)
 {
   //=========================================================================
   // Compute the track parameters
   //=========================================================================
-  struct TrackParameters tp;
+  struct CL_TrackParameters tp;
   float s0, sx, sz, sxz, sz2;
   float u0, uy, uz, uyz, uz2;
+  float sum_xxw = 0.0f, sum_yyw = 0.0f;
   s0 = sx = sz = sxz = sz2 = 0.0f;
   u0 = uy = uz = uyz = uz2 = 0.0f;
   
   // Iterate over the hits, and fit
-  struct Track t = tracks[trackno];
+  struct CL_Track t = tracks[trackno];
 
   for (int h=0; h<t.hitsNum; ++h) {
-    const float x = hit_Xs[h];
-    const float y = hit_Ys[h];
-    const float z = hit_Zs[h];
+    const int hitno = t.hits[h];
+    const float x = hit_Xs[hitno];
+    const float y = hit_Ys[hitno];
+    const float z = hit_Zs[hitno];
     
     const float wx = PARAM_W;
     const float wx_t_x = wx * x;
@@ -123,6 +125,9 @@ void fit(__global const float* const hit_Xs,
     uz += wy_t_z;
     uyz += wy_t_y * z;
     uz2 += wy_t_z * z;
+
+    sum_xxw += x*x*PARAM_W;
+    sum_yyw += y*y*PARAM_W;
   }
 
   {
@@ -149,8 +154,8 @@ void fit(__global const float* const hit_Xs,
     const float m31 = uz - tp.zbeam * u0;
     const float m22 = sz2 - 2 * tp.zbeam * sz + tp.zbeam * tp.zbeam * s0;
     const float m33 = uz2 - 2 * tp.zbeam * uz + tp.zbeam * tp.zbeam * u0;
-    const float den20 = 1.0 / (m22 * m00 - m20 * m20);
-    const float den31 = 1.0 / (m33 * m11 - m31 * m31);
+    const float den20 = 1.0f / (m22 * m00 - m20 * m20);
+    const float den31 = 1.0f / (m33 * m11 - m31 * m31);
 
     tp.cov.c00 = m22 * den20;
     tp.cov.c20 = -m20 * den20;
@@ -161,16 +166,37 @@ void fit(__global const float* const hit_Xs,
   }
 
   {
-    // Decide if this is a forward or backward track.
-    // Calculate Z where the track passes closest to the beam.
-    float zMax = -1.e9;
-    for (int i=0; i<t.hitsNum; ++i) {
-      const float z = hit_Zs[t.hits[i]];
-      zMax = z>zMax ? z : zMax;
-    }
     // Define backward as z closest to beam downstream of hits.
-    tp.backward = tp.zbeam > zMax;
+    tp.backward = tp.zbeam > hit_Zs[t.hits[0]];
   }
+
+  {
+    //=========================================================================
+    // Chi2 / degrees-of-freedom of straight-line fit
+    //=========================================================================
+    float ch = 0.0f;
+    int nDoF = -4 + 2*t.hitsNum;
+    for (int h=0; h<t.hitsNum; ++h) {
+      const int hitno = t.hits[h];
+
+      const float z = hit_Zs[hitno];
+      const float x = tp.x0 + tp.tx * z;
+      const float y = tp.y0 + tp.ty * z;
+
+      // const float dx = x - hit_Xs[hitno];
+      // const float dy = y - hit_Ys[hitno];
+      // ch += dx * dx * PARAM_W + dy * dy * PARAM_W;
+
+      // Error is not necessarily equal for all values in production
+      ch += x*x*PARAM_W + y*y*PARAM_W;
+      // nDoF += 2;
+    }
+    ch -= (sum_xxw + sum_yyw);
+    tp.chi2 = ch / nDoF; 
+  }
+
+  tp.x0 = tp.x0 + tp.tx * tp.zbeam;
+  tp.y0 = tp.y0 + tp.ty * tp.zbeam;
 
   track_parameters[trackno] = tp;
 }
@@ -186,8 +212,8 @@ void fit(__global const float* const hit_Xs,
 __kernel void fitTracks(
   __global const char* const dev_input,
   __global int* const dev_event_offsets,
-  __global struct Track* const dev_tracks,
-  __global struct TrackParameters* const dev_track_parameters,
+  __global struct CL_Track* const dev_tracks,
+  __global struct CL_TrackParameters* const dev_track_parameters,
   __global int* const dev_atomicsStorage)
 {
   // Data initialization
@@ -211,8 +237,8 @@ __kernel void fitTracks(
   __global const float* const hit_Zs = (__global const float*) (hit_Ys + number_of_hits);
 
   // Per event datatypes
-  __global struct Track* tracks = dev_tracks + tracks_offset;
-  __global struct TrackParameters* track_parameters = dev_track_parameters + tracks_offset;
+  __global struct CL_Track* tracks = dev_tracks + tracks_offset;
+  __global struct CL_TrackParameters* track_parameters = dev_track_parameters + tracks_offset;
 
   // We will process n tracks with m threads (workers)
   const int number_of_tracks = dev_atomicsStorage[event_number];
@@ -220,7 +246,7 @@ __kernel void fitTracks(
   const int blockDim = get_local_size(0);
 
   // Calculate track no, and iterate over the tracks
-  for (int i=0; i<(number_of_tracks + id_x - 1) / id_x; ++i) {
+  for (int i=0; i<(number_of_tracks + blockDim - 1) / blockDim; ++i) {
     const int element = id_x + i * blockDim;
     if (element < number_of_tracks) {
         fit(hit_Xs, hit_Ys, hit_Zs, tracks, element, track_parameters);

@@ -99,26 +99,26 @@ float filter(
 {
   // compute the prediction
   const float dz = zhit - z;
-  const float predx = *x + dz * *tx;
+  const float predx = (*x) + dz * (*tx);
 
-  const float dz_t_covTxTx = dz * *covTxTx;
-  const float predcovXTx = *covXTx + dz_t_covTxTx;
-  const float dx_t_covXTx = dz * *covXTx;
+  const float dz_t_covTxTx = dz * (*covTxTx);
+  const float predcovXTx = (*covXTx) + dz_t_covTxTx;
+  const float dx_t_covXTx = dz * (*covXTx);
 
-  const float predcovXX = *covXX + 2 * dx_t_covXTx + dz * dz_t_covTxTx;
-  const float predcovTxTx = *covTxTx;
+  const float predcovXX = (*covXX) + 2 * dx_t_covXTx + dz * dz_t_covTxTx;
+  const float predcovTxTx = (*covTxTx);
   // compute the gain matrix
-  const float R = 1.0f / (1.0f / whit + predcovXX);
+  const float R = 1.0f / ((1.0f / whit) + predcovXX);
   const float Kx = predcovXX * R;
   const float KTx = predcovXTx * R;
   // update the state vector
   const float r = xhit - predx;
-  *x = predx + Kx * r;
-  *tx = *tx + KTx * r;
+  x[0] = predx + Kx * r;
+  tx[0] = (*tx) + KTx * r;
   // update the covariance matrix. we can write it in many ways ...
-  *covXX /*= predcovXX  - Kx * predcovXX */ = (1 - Kx) * predcovXX;
-  *covXTx /*= predcovXTx - predcovXX * predcovXTx / R */ = (1 - Kx) * predcovXTx;
-  *covTxTx = predcovTxTx - KTx * predcovXTx;
+  covXX[0] /*= predcovXX  - Kx * predcovXX */ = (1 - Kx) * predcovXX;
+  covXTx[0] /*= predcovXTx - predcovXX * predcovXTx / R */ = (1 - Kx) * predcovXTx;
+  covTxTx[0] = predcovTxTx - KTx * predcovXTx;
   // return the chi2
   return r * r * R;
 }
@@ -135,26 +135,26 @@ float filter(
 void fitKalman(__global const float* const hit_Xs,
   __global const float* const hit_Ys,
   __global const float* const hit_Zs,
-  __global struct Track* const tracks,
+  __global struct CL_Track* const tracks,
   const int trackno,
-  __global struct TrackParameters* const track_parameters,
-  __global struct FitKalmanTrackParameters* const fit_kalman_track_parameters,
+  __global struct CL_TrackParameters* const track_parameters,
+  __global struct CL_FitKalmanTrackParameters* const fit_kalman_track_parameters,
   const int is_upstream)
 {
   // We do assume it is ordered by Z, as it is
-  struct Track t = tracks[trackno];
-  struct TrackParameters tp = track_parameters[trackno];
-  struct FitKalmanTrackParameters fktp;
+  struct CL_Track t = tracks[trackno];
+  struct CL_TrackParameters tp = track_parameters[trackno];
+  struct CL_FitKalmanTrackParameters fktp;
 
   // Parameters are calculated here
-  const int direction = (tp.backward ? 1 : -1) * (is_upstream==1 ? -1 : 1);
+  const int direction = (tp.backward ? 1 : -1) * (is_upstream==1 ? 1 : -1);
   const float noise2PerLayer = 1e-8 + 7e-6 * (tp.tx * tp.tx + tp.ty * tp.ty);
 
   // assume the hits are sorted,
   // but don't assume anything on the direction of sorting
   int firsthit = 0;
   int lasthit = t.hitsNum - 1;
-  int dhit = +1;
+  int dhit = 1;
   if ((hit_Zs[t.hits[lasthit]] - hit_Zs[t.hits[firsthit]]) * direction < 0) {
     const int temp = firsthit;
     firsthit = lasthit;
@@ -166,9 +166,10 @@ void fitKalman(__global const float* const hit_Xs,
   // filter first the first hit.
 
   // const PrPixelHit *hit = m_hits[firsthit];
-  float x = hit_Xs[firsthit];
-  float y = hit_Ys[firsthit];
-  float z = hit_Zs[firsthit];
+  const int hitno = t.hits[firsthit];
+  float x = hit_Xs[hitno];
+  float y = hit_Ys[hitno];
+  float z = hit_Zs[hitno];
   float tx = tp.tx;
   float ty = tp.ty;
 
@@ -234,10 +235,10 @@ void fitKalman(__global const float* const hit_Xs,
 __kernel void fitKalmanTracks(
   __global const char* const dev_input,
   __global int* const dev_event_offsets,
-  __global struct Track* const dev_tracks,
-  __global struct TrackParameters* const dev_track_parameters,
+  __global struct CL_Track* const dev_tracks,
+  __global struct CL_TrackParameters* const dev_track_parameters,
   __global int* const dev_atomicsStorage,
-  __global struct FitKalmanTrackParameters* const dev_fit_kalman_track_parameters,
+  __global struct CL_FitKalmanTrackParameters* const dev_fit_kalman_track_parameters,
   const int is_upstream)
 {
   // Data initialization
@@ -261,9 +262,9 @@ __kernel void fitKalmanTracks(
   __global const float* const hit_Zs = (__global const float*) (hit_Ys + number_of_hits);
 
   // Per event datatypes
-  __global struct Track* tracks = dev_tracks + tracks_offset;
-  __global struct TrackParameters* track_parameters = dev_track_parameters + tracks_offset;
-  __global struct FitKalmanTrackParameters* fit_kalman_track_parameters = dev_fit_kalman_track_parameters + tracks_offset;
+  __global struct CL_Track* tracks = dev_tracks + tracks_offset;
+  __global struct CL_TrackParameters* track_parameters = dev_track_parameters + tracks_offset;
+  __global struct CL_FitKalmanTrackParameters* fit_kalman_track_parameters = dev_fit_kalman_track_parameters + tracks_offset;
 
   // We will process n tracks with m threads (workers)
   const int number_of_tracks = dev_atomicsStorage[event_number];
@@ -271,7 +272,7 @@ __kernel void fitKalmanTracks(
   const int blockDim = get_local_size(0);
 
   // Calculate track no, and iterate over the tracks
-  for (int i=0; i<(number_of_tracks + id_x - 1) / id_x; ++i) {
+  for (int i=0; i<(number_of_tracks + blockDim - 1) / blockDim; ++i) {
     const int element = id_x + i * blockDim;
     if (element < number_of_tracks) {
         fitKalman(hit_Xs, hit_Ys, hit_Zs, tracks, element,
