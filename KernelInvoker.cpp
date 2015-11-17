@@ -140,11 +140,18 @@ int invokeParallelSearch(
   
   // Adding timing
   // Timing calculation
-  unsigned int niterations = 1;
+  unsigned int niterations = 10;
   unsigned int nexperiments = 1;
 
   std::vector<std::vector<float>> time_values {nexperiments};
   std::vector<std::map<std::string, float>> mresults {nexperiments};
+
+  std::vector<std::vector<float>> fit_time_values {nexperiments};
+  std::vector<std::map<std::string, float>> fit_mresults {nexperiments};
+
+  std::vector<std::vector<float>> kfit_time_values {nexperiments * 2};
+  std::vector<std::map<std::string, float>> kfit_mresults {nexperiments * 2};
+
 
   // Get and log the OpenCL device name
   char deviceName [1024];
@@ -176,20 +183,16 @@ int invokeParallelSearch(
       cl_event kernelEvent;
 
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel, work_dim, NULL, global_work_size, local_work_size, 0, NULL, &kernelEvent));
-      // clCheck(clFinish(commandQueue));
-      clCheck(clWaitForEvents(1 , &kernelEvent));
+      clCheck(clFinish(commandQueue));
+      // clCheck(clWaitForEvents(1 , &kernelEvent));
   
       // Start and end of event
-      unsigned long tstart = 0;
-      unsigned long tend = 0;
+      unsigned long tstart, tend, tduration;
+      tstart = tend = 0;
       clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_START, sizeof(cl_ulong) , &tstart, NULL);
       clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &tend, NULL);
       clReleaseEvent(kernelEvent);
-
-      // Compute the duration in nanoseconds
-      unsigned long tduration = tend - tstart;
-      
-      // DEBUG << "Execution time (ms): " << tduration / 1000000.0 << std::endl;
+      tduration = tend - tstart; // Compute the duration in nanoseconds
       time_values[i].push_back(tduration / 1000000.0f);
 
       DEBUG << "." << std::flush;
@@ -237,6 +240,14 @@ int invokeParallelSearch(
 
       // Call kernel
       clCheck(clEnqueueNDRangeKernel(commandQueue, fit_kernel, fit_work_dim, NULL, fit_global_work_size, fit_local_work_size, 0, NULL, &kernelEvent));
+      clCheck(clFinish(commandQueue));
+
+      tstart = tend = 0;
+      clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_START, sizeof(cl_ulong) , &tstart, NULL);
+      clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &tend, NULL);
+      clReleaseEvent(kernelEvent);
+      tduration = tend - tstart; // Compute the duration in nanoseconds
+      fit_time_values[i].push_back(tduration / 1000000.0f);
 
       DEBUG << "." << std::endl;
 
@@ -308,6 +319,14 @@ int invokeParallelSearch(
 
           // Call kernel
           clCheck(clEnqueueNDRangeKernel(commandQueue, fit_kalman_kernel, fit_kalman_work_dim, NULL, fit_kalman_global_work_size, fit_kalman_local_work_size, 0, NULL, &kernelEvent));
+          clCheck(clFinish(commandQueue));
+
+          tstart = tend = 0;
+          clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_START, sizeof(cl_ulong) , &tstart, NULL);
+          clGetEventProfilingInfo(kernelEvent, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &tend, NULL);
+          clReleaseEvent(kernelEvent);
+          tduration = tend - tstart; // Compute the duration in nanoseconds
+          kfit_time_values[i].push_back(tduration / 1000000.0f);
 
           DEBUG << "." << std::endl;
         }
@@ -385,8 +404,13 @@ int invokeParallelSearch(
   DEBUG << std::endl << "Time averages:" << std::endl;
   for (auto i=0; i<nexperiments; ++i){
     mresults[i] = calcResults(time_values[i]);
+    fit_mresults[i] = calcResults(fit_time_values[i]);
+    kfit_mresults[i] = calcResults(kfit_time_values[i]);
+
     DEBUG << " nthreads (" << NUMTHREADS_X << ", " << (nexperiments==1 ? local_work_size[1] : i+1) <<  "): " << mresults[i]["mean"]
       << " ms (std dev " << mresults[i]["deviation"] << ")" << std::endl;
+    DEBUG << " fit time: " << fit_mresults[i]["mean"] << " ms (std dev " << fit_mresults[i]["deviation"] << ")" << std::endl;
+    DEBUG << " kfit time: " << kfit_mresults[i]["mean"] << " ms (std dev " << kfit_mresults[i]["deviation"] << ")" << std::endl;
   }
 
   // Step 12: Clean the resources
