@@ -12,7 +12,7 @@
 #define USE_SHARED_FOR_HITS false
 #define SH_HIT_MULT 2
 
-#define MAX_TRACKS 3000
+#define MAX_TRACKS 12000
 #define MAX_TRACK_SIZE 24
 
 #define REQUIRED_UNIQUES 0.6f

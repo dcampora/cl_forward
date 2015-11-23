@@ -1,38 +1,65 @@
 
-/**
- * @brief Fits hits to tracks.
- * @details In case the tolerances constraints are met,
- *          returns the chi2 weight of the track. Otherwise,
- *          returns MAX_FLOAT.
- * 
- * @param tx 
- * @param ty 
- * @param h0 
- * @param h1_z
- * @param h2 
- * @return 
- */
-float fitHitToTrack(const float tx, const float ty, const struct Hit* h0, const float h1_z, const struct Hit* h2) {
-  // tolerances
-  const float dz = h2->z - h0->z;
-  const float x_prediction = h0->x + tx * dz;
-  const float dx = fabs(x_prediction - h2->x);
-  const bool tolx_condition = dx < PARAM_TOLERANCE;
+// Used to prefer a device type over another one
+#define DEVICE_CPU 0
+#define DEVICE_GPU 1
+#define DEVICE_ACCELERATOR 2
+#define DEVICE_PREFERENCE DEVICE_GPU
+#define DEVICE_NUMBER 0
 
-  const float y_prediction = h0->y + ty * dz;
-  const float dy = fabs(y_prediction - h2->y);
-  const bool toly_condition = dy < PARAM_TOLERANCE;
+#define NUMTHREADS_X 64
+#define MAX_NUMTHREADS_Y 16
+#define NUM_ATOMICS 5
+#define USE_SHARED_FOR_HITS false
+#define SH_HIT_MULT 2
 
-  // Scatter - Updated to last PrPixel
-  const float scatterNum = (dx * dx) + (dy * dy);
-  const float scatterDenom = 1.f / (h2->z - h1_z);
-  const float scatter = scatterNum * scatterDenom * scatterDenom;
+#define MAX_TRACKS 12000
+#define MAX_TRACK_SIZE 24
 
-  const bool scatter_condition = scatter < MAX_SCATTER;
-  const bool condition = tolx_condition && toly_condition && scatter_condition;
+#define REQUIRED_UNIQUES 0.6f
+#define MIN_HITS_TRACK 3
+#define MAX_FLOAT FLT_MAX
+#define MIN_FLOAT -FLT_MAX
+#define MAX_SKIPPED_MODULES 3
+#define TTF_MODULO 2000
 
-  return condition * scatter + !condition * MAX_FLOAT;
-}
+#define PARAM_W 3966.94f // 0.050 / sqrt( 12. )
+#define PARAM_MAXXSLOPE 0.4f
+#define PARAM_MAXYSLOPE 0.3f
+#define PARAM_MAXXSLOPE_CANDIDATES 0.4f
+
+#define PARAM_TOLERANCE 0.6f
+#define PARAM_TOLERANCE_CANDIDATES 0.6f
+
+#define MAX_SCATTER 0.000016f
+#define SENSOR_DATA_HITNUMS 3
+#define RESULTS_FOLDER "results"
+
+#define PRINT_SOLUTION true
+#define PRINT_VERBOSE true
+#define ASSERTS_ENABLED false
+
+#if ASSERTS_ENABLED == true
+#include "assert.h"
+#define ASSERT(EXPR) ASSERT_CL_RETURN(EXPR, #EXPR);
+#else
+#define ASSERT(EXPR) 
+#endif
+
+struct Sensor {
+    unsigned int hitStart;
+    unsigned int hitNums;
+};
+
+struct Hit {
+    float x;
+    float y;
+    float z;
+};
+
+struct Track { // 4 + 24 * 4 = 100 B
+    unsigned int hitsNum;
+    unsigned int hits[MAX_TRACK_SIZE];
+};
 
 /**
  * @brief Fills dev_hit_candidates.
@@ -184,7 +211,6 @@ __kernel void clFillCandidates(__global struct Track* const dev_tracks, __global
   __global int* const dev_hit_candidates, __global int* const dev_hit_h2_candidates) {
 
   // Data initialization
-
   // Pointers to data within the event
   __global const int* const no_sensors = (__global const int*) dev_input;
   __global const int* const no_hits = (__global const int*) (no_sensors + 1);
@@ -202,6 +228,41 @@ __kernel void clFillCandidates(__global struct Track* const dev_tracks, __global
     hit_Xs, hit_Ys, hit_Zs, sensor_Zs);
 }
 
+
+/**
+ * @brief Fits hits to tracks.
+ * @details In case the tolerances constraints are met,
+ *          returns the chi2 weight of the track. Otherwise,
+ *          returns MAX_FLOAT.
+ * 
+ * @param tx 
+ * @param ty 
+ * @param h0 
+ * @param h1_z
+ * @param h2 
+ * @return 
+ */
+float fitHitToTrack(const float tx, const float ty, const struct Hit* h0, const float h1_z, const struct Hit* h2) {
+  // tolerances
+  const float dz = h2->z - h0->z;
+  const float x_prediction = h0->x + tx * dz;
+  const float dx = fabs(x_prediction - h2->x);
+  const bool tolx_condition = dx < PARAM_TOLERANCE;
+
+  const float y_prediction = h0->y + ty * dz;
+  const float dy = fabs(y_prediction - h2->y);
+  const bool toly_condition = dy < PARAM_TOLERANCE;
+
+  // Scatter - Updated to last PrPixel
+  const float scatterNum = (dx * dx) + (dy * dy);
+  const float scatterDenom = 1.f / (h2->z - h1_z);
+  const float scatter = scatterNum * scatterDenom * scatterDenom;
+
+  const bool scatter_condition = scatter < MAX_SCATTER;
+  const bool condition = tolx_condition && toly_condition && scatter_condition;
+
+  return condition * scatter + !condition * MAX_FLOAT;
+}
 
 /**
  * @brief Performs the track forwarding.
@@ -227,13 +288,17 @@ void trackForwarding(
   __local float* const sh_hit_x, __local float* const sh_hit_y, __local float* const sh_hit_z,
 #endif
   __global const float* const hit_Xs, __global const float* const hit_Ys, __global const float* const hit_Zs,
-  __global bool* const hit_used, volatile __global int* const tracks_insertPointer, volatile __global int* const ttf_insertPointer,
+  __global bool* const hit_used, __global int* const tracks_insertPointer,
   __global int* const weaktracks_insertPointer, const int blockDim_sh_hit, __local int* const sensor_data,
-  const unsigned int diff_ttf, const int blockDim_product, __global int* const tracks_to_follow,
-  __global int* const weak_tracks, const unsigned int prev_ttf, __global struct Track* const tracklets,
-  __global struct Track* const tracks, const int number_of_hits) {
+  const int blockDim_product,
+  __global int* const weak_tracks, __global struct Track* const tracklets,
+  __global struct Track* const tracks, const int number_of_hits,
+  __global int* const r_tracks_to_follow, __global int* const r_ttf_insertPointer,
+  __global int* const w_tracks_to_follow, __global int* const w_ttf_insertPointer) {
 
-  for (int i=0; i<(diff_ttf + blockDim_product - 1) / blockDim_product; ++i) {
+  const int read_ttf = r_ttf_insertPointer[0];
+
+  for (int i=0; i<(read_ttf + blockDim_product - 1) / blockDim_product; ++i) {
     const unsigned int ttf_element = blockDim_product * i + get_local_id(1) * get_local_size(0) + get_local_id(0);
 
     // These variables need to go here, shared memory and scope requirements
@@ -243,9 +308,9 @@ void trackForwarding(
     struct Hit h0;
 
     // The logic is broken in two parts for shared memory loading
-    const bool ttf_condition = ttf_element < diff_ttf;
+    const bool ttf_condition = ttf_element < read_ttf;
     if (ttf_condition) {
-      fulltrackno = tracks_to_follow[(prev_ttf + ttf_element) % TTF_MODULO];
+      fulltrackno = r_tracks_to_follow[ttf_element];
       const bool track_flag = (fulltrackno & 0x80000000) == 0x80000000;
       skipped_modules = (fulltrackno & 0x70000000) >> 28;
       trackno = fulltrackno & 0x0FFFFFFF;
@@ -367,8 +432,8 @@ void trackForwarding(
         tracks[trackno] = t;
 
         // Add the tracks to the bag of tracks to_follow
-        const unsigned int ttfP = atomic_add(ttf_insertPointer, 1) % TTF_MODULO;
-        tracks_to_follow[ttfP] = trackno;
+        const unsigned int ttfP = atomic_add(w_ttf_insertPointer, 1);
+        w_tracks_to_follow[ttfP] = trackno;
       }
       // A track just skipped a module
       // We keep it for another round
@@ -377,8 +442,8 @@ void trackForwarding(
         trackno = ((skipped_modules + 1) << 28) | (fulltrackno & 0x8FFFFFFF);
 
         // Add the tracks to the bag of tracks to_follow
-        const unsigned int ttfP = atomic_add(ttf_insertPointer, 1) % TTF_MODULO;
-        tracks_to_follow[ttfP] = trackno;
+        const unsigned int ttfP = atomic_add(w_ttf_insertPointer, 1);
+        w_tracks_to_follow[ttfP] = trackno;
       }
       // If there are only three hits in this track,
       // mark it as "doubtful"
@@ -406,7 +471,6 @@ void trackForwarding(
  * @param sh_hit_y                
  * @param sh_hit_z                
  * @param sh_hit_process          
- * @param hit_used                
  * @param hit_h2_candidates       
  * @param blockDim_sh_hit         
  * @param best_fits               
@@ -420,10 +484,11 @@ void trackCreation(
   __local float* const sh_hit_x, __local float* const sh_hit_y, __local float* const sh_hit_z,
 #endif
   __global const float* const hit_Xs, __global const float* const hit_Ys, __global const float* const hit_Zs,
-  __local int* const sensor_data, __global int* const hit_candidates, __global int* const max_numhits_to_process, __local int* const sh_hit_process,
-  __global bool* const hit_used, __global int* const hit_h2_candidates, const int blockDim_sh_hit, __global float* const best_fits,
+  __local int* const sensor_data, __global int* const hit_candidates, __global int* const max_numhits_to_process,
+  __global int* const hit_h2_candidates, const int blockDim_sh_hit, __global float* const best_fits,
   __global int* const tracklets_insertPointer, __global int* const ttf_insertPointer,
-  __global struct Track* const tracklets, __global int* const tracks_to_follow) {
+  __global struct Track* const tracklets, __global int* const tracks_to_follow,
+  const int h0_index, bool inside_bounds) {
 
   // Track creation starts
   unsigned int best_hit_h1, best_hit_h2;
@@ -431,8 +496,7 @@ void trackCreation(
   int first_h1, first_h2, last_h2;
   float dymax;
 
-  const int h0_index = sh_hit_process[get_local_id(0)];
-  bool inside_bounds = h0_index != -1;
+  // bool inside_bounds = inside_bounds;
   unsigned int num_h1_to_process = 0;
   float best_fit = MAX_FLOAT;
 
@@ -460,22 +524,18 @@ void trackCreation(
   // Only iterate max_numhits_to_process[0] iterations (with get_local_size(1) threads) :D :D :D
   for (int j=0; j<(max_numhits_to_process[0] + get_local_size(1) - 1) / get_local_size(1); ++j) {
     const int h1_element = get_local_size(1) * j + get_local_id(1);
-    inside_bounds &= h1_element < num_h1_to_process; // Hmmm...
-    bool is_h1_used = true; // TODO: Can be merged with h1_element restriction
+    inside_bounds &= h1_element < num_h1_to_process;
     int h1_index;
     float dz_inverted;
 
     if (inside_bounds) {
       h1_index = first_h1 + h1_element;
-      is_h1_used = hit_used[h1_index];
-      if (!is_h1_used) {
-        h1.x = hit_Xs[h1_index];
-        h1.y = hit_Ys[h1_index];
-        h1.z = hit_Zs[h1_index];
+      h1.x = hit_Xs[h1_index];
+      h1.y = hit_Ys[h1_index];
+      h1.z = hit_Zs[h1_index];
 
-        dz_inverted = 1.f / (h1.z - h0.z);
-      }
-
+      dz_inverted = 1.f / (h1.z - h0.z);
+      
       first_h2 = hit_h2_candidates[2 * h1_index];
       last_h2 = hit_h2_candidates[2 * h1_index + 1];
       // In case there be no h2 to process,
@@ -505,7 +565,7 @@ void trackCreation(
       barrier(CLK_LOCAL_MEM_FENCE);
 #endif
 
-      if (inside_bounds && !is_h1_used) {
+      if (inside_bounds) {
 
         const int last_hit_h2 = min(blockDim_sh_hit * (k + 1), sensor_data[SENSOR_DATA_HITNUMS + 2]);
         for (int kk=blockDim_sh_hit * k; kk<last_hit_h2; ++kk) {
@@ -581,7 +641,7 @@ void trackCreation(
     ASSERT(trackP < number_of_hits)
     tracklets[trackP].hitsNum = 3;
     __global unsigned int* const t_hits = tracklets[trackP].hits;
-    t_hits[0] = (unsigned int) sh_hit_process[get_local_id(0)];
+    t_hits[0] = h0_index;
     t_hits[1] = best_hit_h1;
     t_hits[2] = best_hit_h2;
 
@@ -627,17 +687,114 @@ __kernel void clSearchByTriplets(__global struct Track* const dev_tracks, __glob
   __global int* const dev_hit_offsets, __global float* const dev_best_fits,
   __global int* const dev_hit_candidates, __global int* const dev_hit_h2_candidates) {
   
-
   // Data initialization
   // Each event is treated with two blocks, one for each side.
-  const int event_number = get_group_id(0);
-  const int events_under_process = get_num_groups(0);
-  const int tracks_offset = event_number * MAX_TRACKS;
+  const int sensor_id = get_group_id(0);
+  const int sensors_under_process = get_num_groups(0);
   const int blockDim_product = get_local_size(0) * get_local_size(1);
 
   // Pointers to data within the event
-  const int data_offset = dev_event_offsets[event_number];
-  __global const int* const no_sensors = (__global const int*) (dev_input + data_offset);
+  __global const int* const no_sensors = (__global const int*) dev_input;
+  __global const int* const no_hits = (__global const int*) (no_sensors + 1);
+  __global const int* const sensor_Zs = (__global const int*) (no_hits + 1);
+  const int number_of_sensors = no_sensors[0];
+  const int number_of_hits = no_hits[0];
+  __global const int* const sensor_hitStarts = (__global const int*) (sensor_Zs + number_of_sensors);
+  __global const int* const sensor_hitNums = (__global const int*) (sensor_hitStarts + number_of_sensors);
+  __global const unsigned int* const hit_IDs = (__global const unsigned int*) (sensor_hitNums + number_of_sensors);
+  __global const float* const hit_Xs = (__global const float*) (hit_IDs + number_of_hits);
+  __global const float* const hit_Ys = (__global const float*) (hit_Xs + number_of_hits);
+  __global const float* const hit_Zs = (__global const float*) (hit_Ys + number_of_hits);
+
+  // Per side datatypes
+  const int hit_offset = sensor_id * 100; // MAX_TRACKS_PER_SENSOR;
+  __global bool* const hit_used = dev_hit_used;
+  __global int* const hit_candidates = dev_hit_candidates;
+  __global int* const hit_h2_candidates = dev_hit_h2_candidates;
+
+  __global int* const tracks_to_follow = dev_tracks_to_follow + sensor_id * TTF_MODULO;
+  __global int* const weak_tracks = dev_weak_tracks + hit_offset;
+  __global struct Track* const tracklets = dev_tracklets + hit_offset;
+  __global float* const best_fits = dev_best_fits + sensor_id * blockDim_product;
+
+  // Initialize variables according to event number and sensor side
+  // Insert pointers (atomics)
+  int shift = 2;
+  __global int* const ttf_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
+  __global int* const tracklets_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
+  __global int* const sh_hit_lastPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
+  __global int* const max_numhits_to_process = (__global int*) dev_atomicsStorage + shift + sensor_id;
+
+  // The fun begins
+#if USE_SHARED_FOR_HITS
+  __local float sh_hit_x [NUMTHREADS_X * SH_HIT_MULT];
+  __local float sh_hit_y [NUMTHREADS_X * SH_HIT_MULT];
+  __local float sh_hit_z [NUMTHREADS_X * SH_HIT_MULT];
+#endif
+  __local int sensor_data [6];
+
+  const int cond_sh_hit_mult = min((int) get_local_size(1), SH_HIT_MULT);
+  const int blockDim_sh_hit = NUMTHREADS_X * cond_sh_hit_mult;
+
+
+  // Start on a different sensor depending on the block
+  int first_sensor = 51 - sensor_id;
+  
+  // Load common things from sensors into shared memory
+  if (get_local_id(0) < 6 && get_local_id(1) == 0) {
+    const int sensor_number = first_sensor - (get_local_id(0) % 3) * 2;
+    __global const int* const sensor_pointer = get_local_id(0) < 3 ? sensor_hitStarts : sensor_hitNums;
+
+    sensor_data[get_local_id(0)] = sensor_pointer[sensor_number];
+  }
+  else if (get_local_id(0) == 6 && get_local_id(1) == 0) {
+    sh_hit_lastPointer[0] = 0;
+  }
+  else if (get_local_id(0) == 7 && get_local_id(1) == 0) {
+    max_numhits_to_process[0] = 0;
+  }
+
+  barrier(CLK_GLOBAL_MEM_FENCE | CLK_LOCAL_MEM_FENCE);
+
+  // Seeding - Track creation
+
+  // Iterate in all hits for current sensor
+  for (int i=0; i<(sensor_hitNums[first_sensor] + blockDim_product - 1) / blockDim_product; ++i) {
+    
+    // Track creation for hit i
+    const int element = blockDim_product * i + get_local_id(1) * get_local_size(0) + get_local_id(0);
+    const int h0_index = sensor_hitStarts[first_sensor] + element;
+    const bool inside_bounds = element < sensor_hitNums[first_sensor];
+
+    trackCreation(
+#if USE_SHARED_FOR_HITS
+      (__local float*) &sh_hit_x[0], (__local float*) &sh_hit_y[0], (__local float*) &sh_hit_z[0],
+#endif
+      hit_Xs, hit_Ys, hit_Zs,
+      (__local int*) &sensor_data[0], hit_candidates, max_numhits_to_process,
+      hit_h2_candidates, blockDim_sh_hit, best_fits,
+      dev_atomicsStorage, ttf_insertPointer, dev_tracks, tracks_to_follow,
+      h0_index, inside_bounds);
+  }
+}
+
+
+
+__kernel void clTrackForwarding(__global struct Track* const dev_tracks, __global const char* const dev_input,
+  __global int* const dev_tracks_to_follow, __global bool* const dev_hit_used,
+  __global int* const dev_atomicsStorage, __global struct Track* const dev_tracklets,
+  __global int* const dev_weak_tracks, __global int* const dev_event_offsets,
+  __global int* const dev_hit_offsets, __global float* const dev_best_fits,
+  __global int* const dev_hit_candidates, __global int* const dev_hit_h2_candidates) {
+  
+  // Data initialization
+  // Each event is treated with two blocks, one for each side.
+  const int sensor_id = get_group_id(0);
+  // const int sensors_under_process = get_num_groups(0);
+  const int blockDim_product = get_local_size(0) * get_local_size(1);
+
+  // Pointers to data within the event
+  __global const int* const no_sensors = (__global const int*) dev_input;
   __global const int* const no_hits = (__global const int*) (no_sensors + 1);
   __global const int* const sensor_Zs = (__global const int*) (no_hits + 1);
   const int number_of_sensors = no_sensors[0];
@@ -650,28 +807,26 @@ __kernel void clSearchByTriplets(__global struct Track* const dev_tracks, __glob
   __global const float* const hit_Zs = (__global const float*) (hit_Ys + number_of_hits);
 
   // Per event datatypes
-  __global struct Track* tracks = dev_tracks + tracks_offset;
-  __global unsigned int* const tracks_insertPointer = (__global unsigned int*) dev_atomicsStorage + event_number;
+  __global struct Track* tracks = dev_tracks;
+  __global unsigned int* const tracks_insertPointer = (__global unsigned int*) dev_atomicsStorage;
+  __global int* const weaktracks_insertPointer = (__global int*) dev_atomicsStorage + 1;
 
   // Per side datatypes
-  const int hit_offset = dev_hit_offsets[event_number];
-  __global bool* const hit_used = dev_hit_used + hit_offset;
-  __global int* const hit_candidates = dev_hit_candidates + hit_offset * 2;
-  __global int* const hit_h2_candidates = dev_hit_h2_candidates + hit_offset * 2;
+  __global bool* const hit_used = dev_hit_used;
+  __global int* const hit_candidates = dev_hit_candidates;
+  __global int* const hit_h2_candidates = dev_hit_h2_candidates;
 
-  __global int* const tracks_to_follow = dev_tracks_to_follow + event_number * TTF_MODULO;
-  __global int* const weak_tracks = dev_weak_tracks + hit_offset;
-  __global struct Track* const tracklets = dev_tracklets + hit_offset;
-  __global float* const best_fits = dev_best_fits + event_number * blockDim_product;
+  __global int* const tracks_to_follow = dev_tracks_to_follow + sensor_id * TTF_MODULO;
+  __global int* const weak_tracks = dev_weak_tracks;
+  __global struct Track* const tracklets = dev_tracklets;
 
   // Initialize variables according to event number and sensor side
   // Insert pointers (atomics)
-  const int ip_shift = events_under_process + event_number * NUM_ATOMICS;
-  __global int* const weaktracks_insertPointer = (__global int*) dev_atomicsStorage + ip_shift + 1;
-  __global int* const tracklets_insertPointer = (__global int*) dev_atomicsStorage + ip_shift + 2;
-  __global int* const ttf_insertPointer = (__global int*) dev_atomicsStorage + ip_shift + 3;
-  __global int* const sh_hit_lastPointer = (__global int*) dev_atomicsStorage + ip_shift + 4;
-  __global int* const max_numhits_to_process = (__global int*) dev_atomicsStorage + ip_shift + 5;
+  int shift = 2;
+  __global int* const ttf_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
+  __global int* const tracklets_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
+  __global int* const sh_hit_lastPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
+  __global int* const max_numhits_to_process = (__global int*) dev_atomicsStorage + shift + sensor_id;
 
   // The fun begins
 #if USE_SHARED_FOR_HITS
@@ -679,48 +834,20 @@ __kernel void clSearchByTriplets(__global struct Track* const dev_tracks, __glob
   __local float sh_hit_y [NUMTHREADS_X * SH_HIT_MULT];
   __local float sh_hit_z [NUMTHREADS_X * SH_HIT_MULT];
 #endif
-  __local int sh_hit_process [NUMTHREADS_X];
   __local int sensor_data [6];
 
   const int cond_sh_hit_mult = min((int) get_local_size(1), SH_HIT_MULT);
   const int blockDim_sh_hit = NUMTHREADS_X * cond_sh_hit_mult;
 
+  // Let's do the Track Forwarding sequentially now
+  for (int first_sensor=51; first_sensor>=5; --first_sensor) {
 
-
-  // Deal with odd or even in the same thread
-  int first_sensor = number_of_sensors - 1;
-
-  // Prepare s1 and s2 for the first iteration
-  unsigned int prev_ttf, last_ttf = 0;
-
-  while (first_sensor >= 4) {
-
-    barrier(CLK_GLOBAL_MEM_FENCE | CLK_LOCAL_MEM_FENCE);
-    
-    // Iterate in sensors
-    // Load in shared
+    // Update pointers
     if (get_local_id(0) < 6 && get_local_id(1) == 0) {
       const int sensor_number = first_sensor - (get_local_id(0) % 3) * 2;
       __global const int* const sensor_pointer = get_local_id(0) < 3 ? sensor_hitStarts : sensor_hitNums;
-
       sensor_data[get_local_id(0)] = sensor_pointer[sensor_number];
     }
-
-    else if (get_local_id(0) == 6 && get_local_id(1) == 0) {
-      sh_hit_lastPointer[0] = 0;
-    }
-
-    else if (get_local_id(0) == 7 && get_local_id(1) == 0) {
-      max_numhits_to_process[0] = 0;
-    }
-
-    // We need this barrier if we are not using shared memory for the hits.
-    // Removing shmem for hits removes the barriers in trackForwarding.
-    // Otherwise the three statements from before could be executed before / after updating
-    // the values inside trackForwarding
-    prev_ttf = last_ttf;
-    last_ttf = ttf_insertPointer[0];
-    const unsigned int diff_ttf = last_ttf - prev_ttf;
 
     barrier(CLK_GLOBAL_MEM_FENCE | CLK_LOCAL_MEM_FENCE);
 
@@ -730,79 +857,23 @@ __kernel void clSearchByTriplets(__global struct Track* const dev_tracks, __glob
       (__local float*) &sh_hit_x[0], (__local float*) &sh_hit_y[0], (__local float*) &sh_hit_z[0],
 #endif
       hit_Xs, hit_Ys, hit_Zs, hit_used,
-      tracks_insertPointer, ttf_insertPointer, weaktracks_insertPointer,
+      tracks_insertPointer, weaktracks_insertPointer,
       blockDim_sh_hit, (__local int*) &sensor_data[0],
-      diff_ttf, blockDim_product, tracks_to_follow, weak_tracks, prev_ttf,
-      tracklets, tracks, number_of_hits);
-
-    // Iterate in all hits for current sensor
-    // 2a. Seeding - Track creation
-
-    // Pre-seeding 
-    // Get the hits we are going to iterate onto in sh_hit_process,
-    // in groups of max NUMTHREADS_X
-
-    unsigned int sh_hit_prevPointer = 0;
-    unsigned int shift_lastPointer = get_local_size(0);
-    while (sh_hit_prevPointer < sensor_data[SENSOR_DATA_HITNUMS]) {
-
-      barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
-      if (get_local_id(1) == 0) {
-        // All threads in this context will add a hit to the 
-        // shared elements, or exhaust the list
-        const int shift_sh_element = get_local_id(1) * get_local_size(0) + get_local_id(0);
-        int sh_element = sh_hit_prevPointer + shift_sh_element;
-        bool inside_bounds = sh_element < sensor_data[SENSOR_DATA_HITNUMS];
-        int h0_index = sensor_data[0] + sh_element;
-        bool is_h0_used = inside_bounds ? hit_used[h0_index] : 1;
-
-        // Find an unused element or exhaust the list,
-        // in case the hit is used
-        while (inside_bounds && is_h0_used) {
-          // Since it is used, find another element while we are inside bounds
-          // This is a simple gather for those elements
-          sh_element = sh_hit_prevPointer + shift_lastPointer + atomic_add(sh_hit_lastPointer, 1);
-          inside_bounds = sh_element < sensor_data[SENSOR_DATA_HITNUMS];
-          h0_index = sensor_data[0] + sh_element;
-          is_h0_used = inside_bounds ? hit_used[h0_index] : 1;
-        }
-
-        // Fill in sh_hit_process with either the found hit or -1
-        ASSERT(shift_sh_element < NUMTHREADS_X)
-        ASSERT(h0_index >= 0)
-        sh_hit_process[shift_sh_element] = (inside_bounds && !is_h0_used) ? h0_index : -1;
-      }
-      barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
-
-      // Update the iteration condition
-      sh_hit_prevPointer = sh_hit_lastPointer[0] + shift_lastPointer;
-      shift_lastPointer += get_local_size(0);
-
-      // Track creation
-      trackCreation(
-#if USE_SHARED_FOR_HITS
-        (__local float*) &sh_hit_x[0], (__local float*) &sh_hit_y[0], (__local float*) &sh_hit_z[0],
-#endif
-        hit_Xs, hit_Ys, hit_Zs, (__local int*) &sensor_data[0], hit_candidates, max_numhits_to_process,
-        (__local int*) &sh_hit_process[0], hit_used, hit_h2_candidates, blockDim_sh_hit, best_fits,
-        tracklets_insertPointer, ttf_insertPointer, tracklets, tracks_to_follow);
-    }
-
-    first_sensor -= 1;
+      blockDim_product, weak_tracks,
+      tracklets, tracks, number_of_hits,
+      &tracks_to_follow[(first_sensor-4)*TTF_MODULO], &ttf_insertPointer[first_sensor-4],
+      &tracks_to_follow[(first_sensor-5)*TTF_MODULO], &ttf_insertPointer[first_sensor-5]);
   }
 
   barrier(CLK_GLOBAL_MEM_FENCE);
 
-  prev_ttf = last_ttf;
-  last_ttf = ttf_insertPointer[0];
-  const unsigned int diff_ttf = last_ttf - prev_ttf;
-
   // Process the last bunch of track_to_follows
-  for (int i=0; i<(diff_ttf + blockDim_product - 1) / blockDim_product; ++i) {
+  const int read_ttf = ttf_insertPointer[4];
+  for (int i=0; i<(read_ttf + blockDim_product - 1) / blockDim_product; ++i) {
     const unsigned int ttf_element = blockDim_product * i + get_local_id(1) * get_local_size(0) + get_local_id(0);
 
-    if (ttf_element < diff_ttf) {
-      const int fulltrackno = tracks_to_follow[(prev_ttf + ttf_element) % TTF_MODULO];
+    if (ttf_element < read_ttf) {
+      const int fulltrackno = (tracks_to_follow + 4*TTF_MODULO)[ttf_element];
       const bool track_flag = (fulltrackno & 0x80000000) == 0x80000000;
       const int trackno = fulltrackno & 0x0FFFFFFF;
 
