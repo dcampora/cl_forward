@@ -24,7 +24,8 @@ int invokeParallelSearch(
   
   // Startup settings
   // Now we are going to call with number_of_sensors - 4
-  size_t fillCandidates_global_work_size[2] = { (size_t) NUMTHREADS_X * (number_of_sensors - 4), 4 };
+  int fillCandidates_blocks = (number_of_sensors - 4);
+  size_t fillCandidates_global_work_size[2] = { (size_t) NUMTHREADS_X * fillCandidates_blocks, 4 };
   size_t fillCandidates_local_work_size[2] = { (size_t) NUMTHREADS_X, 4 };
   cl_uint fillCandidates_work_dim = 2;
 
@@ -168,13 +169,17 @@ int invokeParallelSearch(
   clCheck(clGetDeviceInfo(devices[DEVICE_NUMBER], CL_DEVICE_NAME, 1024, deviceName, NULL));
   DEBUG << "Invoking kernels on your " << deviceName << std::endl;
 
+  // size_t
+  // clCheck(clGetDeviceInfo(devices[DEVICE_NUMBER], CL_DEVICE_MAX_WORK_GROUP_SIZE, 1024, deviceName, NULL));
+  // DEBUG << "CL_DEVICE_MAX_WORK_GROUP_SIZE " << deviceName << std::endl;
+
   for (auto i=0; i<nexperiments; ++i) {
     // Update the number of threads in Y if more than 1 experiment
     if (nexperiments!=1) {
       fillCandidates_global_work_size[1] = i+1;
-      fillCandidates_global_work_size[1] = i+1;
+      fillCandidates_local_work_size[1] = i+1;
       searchByTriplets_global_work_size[1] = i+1;
-      searchByTriplets_global_work_size[1] = i+1;
+      searchByTriplets_local_work_size[1] = i+1;
 
       DEBUG << i+1 << ": " << std::flush;
     }
@@ -193,6 +198,11 @@ int invokeParallelSearch(
       clCheck(clFinish(commandQueue));
 
       cl_event event_searchByTriplets, event_fillCandidates;
+
+      // DEBUG << "Calling fillCandidates with: " << std::endl
+      //   << " work_dim: " << fillCandidates_work_dim << std::endl
+      //   << " global_work_size: " << fillCandidates_global_work_size[0] << ", " << fillCandidates_global_work_size[1] << std::endl
+      //   << " local_work_size: " << fillCandidates_local_work_size[0] << ", " << fillCandidates_local_work_size[1] << std::endl << std::endl;
 
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_fillCandidates, fillCandidates_work_dim, NULL, fillCandidates_global_work_size, fillCandidates_local_work_size, 0, NULL, &event_fillCandidates));
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_searchByTriplets, searchByTriplets_work_dim, NULL, searchByTriplets_global_work_size, searchByTriplets_local_work_size, 0, NULL, &event_searchByTriplets));
@@ -278,7 +288,7 @@ int invokeParallelSearch(
     mresults_fillCandidates[i] = calcResults(times_fillCandidates[i]);
     mresults_searchByTriplets[i] = calcResults(times_searchByTriplets[i]);
 
-    DEBUG << " nthreads (" << NUMTHREADS_X << ", " << (nexperiments==1 ? local_work_size[1] : i+1) <<  "):" << std::endl;
+    DEBUG << " nthreads (" << NUMTHREADS_X << ", " << (nexperiments==1 ? fillCandidates_local_work_size[1] : i+1) <<  "):" << std::endl;
     DEBUG << "  fillCandidates: " << mresults_fillCandidates[i]["mean"] << " ms (std dev " << mresults_fillCandidates[i]["deviation"] << ")" << std::endl;
     DEBUG << "  searchByTriplets: " << mresults_searchByTriplets[i]["mean"] << " ms (std dev " << mresults_searchByTriplets[i]["deviation"] << ")" << std::endl << std::endl;
   }

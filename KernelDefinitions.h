@@ -34,7 +34,7 @@
 #define SENSOR_DATA_HITNUMS 3
 #define RESULTS_FOLDER "results"
 
-#define PRINT_SOLUTION false
+#define PRINT_SOLUTION true
 #define PRINT_VERBOSE true
 #define ASSERTS_ENABLED false
 
