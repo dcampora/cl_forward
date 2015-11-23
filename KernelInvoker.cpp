@@ -23,9 +23,14 @@ int invokeParallelSearch(
   int number_of_sensors = *h_no_sensors;
   
   // Startup settings
-  size_t global_work_size[2] = { (size_t) NUMTHREADS_X * eventsToProcess, 2 };
-  size_t local_work_size[2] = { (size_t) NUMTHREADS_X, 2 };
-  cl_uint work_dim = 2;
+  // Now we are going to call with number_of_sensors - 4
+  size_t fillCandidates_global_work_size[2] = { (size_t) NUMTHREADS_X * (number_of_sensors - 4), 4 };
+  size_t fillCandidates_local_work_size[2] = { (size_t) NUMTHREADS_X, 4 };
+  cl_uint fillCandidates_work_dim = 2;
+
+  size_t searchByTriplets_global_work_size[2] = { (size_t) NUMTHREADS_X * input.size(), 4 };
+  size_t searchByTriplets_local_work_size[2] = { (size_t) NUMTHREADS_X, 4 };
+  cl_uint searchByTriplets_work_dim = 2;
 
   // Choose platform according to the macro DEVICE_PREFERENCE
   cl_device_id* devices;
@@ -41,7 +46,7 @@ int invokeParallelSearch(
   // Step 5: Create program object - KernelDefinitions.h + kernel_searchByTriplets.cl
   std::string definitions_str, kernel_str, source_str;
   clCheck(convertClToString("KernelDefinitions.h", definitions_str));
-  clCheck(convertClToString("kernel_searchByTriplets.cl", kernel_str));
+  clCheck(convertClToString("Kernel.cl", kernel_str));
   source_str = definitions_str + kernel_str;
   const char* source = source_str.c_str();
   size_t sourceSize[] = { source_str.size() };
@@ -166,8 +171,10 @@ int invokeParallelSearch(
   for (auto i=0; i<nexperiments; ++i) {
     // Update the number of threads in Y if more than 1 experiment
     if (nexperiments!=1) {
-      global_work_size[1] = i+1;
-      local_work_size[1] = i+1;
+      fillCandidates_global_work_size[1] = i+1;
+      fillCandidates_global_work_size[1] = i+1;
+      searchByTriplets_global_work_size[1] = i+1;
+      searchByTriplets_global_work_size[1] = i+1;
 
       DEBUG << i+1 << ": " << std::flush;
     }
@@ -187,8 +194,8 @@ int invokeParallelSearch(
 
       cl_event event_searchByTriplets, event_fillCandidates;
 
-      clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_fillCandidates, work_dim, NULL, global_work_size, local_work_size, 0, NULL, &event_fillCandidates));
-      clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_searchByTriplets, work_dim, NULL, global_work_size, local_work_size, 0, NULL, &event_searchByTriplets));
+      clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_fillCandidates, fillCandidates_work_dim, NULL, fillCandidates_global_work_size, fillCandidates_local_work_size, 0, NULL, &event_fillCandidates));
+      clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_searchByTriplets, searchByTriplets_work_dim, NULL, searchByTriplets_global_work_size, searchByTriplets_local_work_size, 0, NULL, &event_searchByTriplets));
       clCheck(clFinish(commandQueue));
   
       // Start and end of event
@@ -208,7 +215,7 @@ int invokeParallelSearch(
       clReleaseEvent(event_searchByTriplets);
 
       // Compute the duration in nanoseconds
-      unsigned long tduration = tend - tstart;
+      tduration = tend - tstart;
       times_searchByTriplets[i].push_back(tduration / 1000000.0f);
 
       DEBUG << "." << std::flush;
@@ -273,12 +280,11 @@ int invokeParallelSearch(
 
     DEBUG << " nthreads (" << NUMTHREADS_X << ", " << (nexperiments==1 ? local_work_size[1] : i+1) <<  "):" << std::endl;
     DEBUG << "  fillCandidates: " << mresults_fillCandidates[i]["mean"] << " ms (std dev " << mresults_fillCandidates[i]["deviation"] << ")" << std::endl;
-    DEBUG << "  searchByTriplets: " << mresults_searchByTriplets[i]["mean"] << " ms (std dev " << mresults_searchByTriplets[i]["deviation"] << ")" << std::endl;
+    DEBUG << "  searchByTriplets: " << mresults_searchByTriplets[i]["mean"] << " ms (std dev " << mresults_searchByTriplets[i]["deviation"] << ")" << std::endl << std::endl;
   }
 
   // Step 12: Clean the resources
-  clCheck(clReleaseKernel(kernel_searchByTriplets));
-  clCheck(clReleaseKernel(kernel_searchByTriplets));
+  clCheck(clReleaseKernel(kernel_fillCandidates));
   clCheck(clReleaseKernel(kernel_searchByTriplets));
 
   clCheck(clReleaseProgram(program));
