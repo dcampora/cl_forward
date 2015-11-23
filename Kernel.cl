@@ -178,6 +178,52 @@ void fillCandidates(__global int* const hit_candidates,
 }
 
 /**
+ * Just fillCandidates
+ */
+__kernel void clFillCandidates(__global struct Track* const dev_tracks, __global const char* const dev_input,
+  __global int* const dev_tracks_to_follow, __global bool* const dev_hit_used,
+  __global int* const dev_atomicsStorage, __global struct Track* const dev_tracklets,
+  __global int* const dev_weak_tracks, __global int* const dev_event_offsets,
+  __global int* const dev_hit_offsets, __global float* const dev_best_fits,
+  __global int* const dev_hit_candidates, __global int* const dev_hit_h2_candidates) {
+
+  // Data initialization
+  // Each event is treated with two blocks, one for each side.
+  const int event_number = get_group_id(0);
+  const int events_under_process = get_num_groups(0);
+  const int tracks_offset = event_number * MAX_TRACKS;
+  const int blockDim_product = get_local_size(0) * get_local_size(1);
+
+  // Pointers to data within the event
+  const int data_offset = dev_event_offsets[event_number];
+  __global const int* const no_sensors = (__global const int*) (dev_input + data_offset);
+  __global const int* const no_hits = (__global const int*) (no_sensors + 1);
+  __global const int* const sensor_Zs = (__global const int*) (no_hits + 1);
+  const int number_of_sensors = no_sensors[0];
+  const int number_of_hits = no_hits[0];
+  __global const int* const sensor_hitStarts = (__global const int*) (sensor_Zs + number_of_sensors);
+  __global const int* const sensor_hitNums = (__global const int*) (sensor_hitStarts + number_of_sensors);
+  __global const unsigned int* const hit_IDs = (__global const unsigned int*) (sensor_hitNums + number_of_sensors);
+  __global const float* const hit_Xs = (__global const float*) (hit_IDs + number_of_hits);
+  __global const float* const hit_Ys = (__global const float*) (hit_Xs + number_of_hits);
+  __global const float* const hit_Zs = (__global const float*) (hit_Ys + number_of_hits);
+
+  // Per event datatypes
+  __global struct Track* tracks = dev_tracks + tracks_offset;
+  __global unsigned int* const tracks_insertPointer = (__global unsigned int*) dev_atomicsStorage + event_number;
+
+  // Per side datatypes
+  const int hit_offset = dev_hit_offsets[event_number];
+  __global bool* const hit_used = dev_hit_used + hit_offset;
+  __global int* const hit_candidates = dev_hit_candidates + hit_offset * 2;
+  __global int* const hit_h2_candidates = dev_hit_h2_candidates + hit_offset * 2;
+
+  fillCandidates(hit_candidates, hit_h2_candidates, number_of_sensors, sensor_hitStarts, sensor_hitNums,
+    hit_Xs, hit_Ys, hit_Zs, sensor_Zs);
+}
+
+
+/**
  * @brief Performs the track forwarding.
  *
  * @param hit_Xs           
@@ -659,8 +705,7 @@ __kernel void clSearchByTriplets(__global struct Track* const dev_tracks, __glob
   const int cond_sh_hit_mult = min((int) get_local_size(1), SH_HIT_MULT);
   const int blockDim_sh_hit = NUMTHREADS_X * cond_sh_hit_mult;
 
-  fillCandidates(hit_candidates, hit_h2_candidates, number_of_sensors, sensor_hitStarts, sensor_hitNums,
-    hit_Xs, hit_Ys, hit_Zs, sensor_Zs);
+
 
   // Deal with odd or even in the same thread
   int first_sensor = number_of_sensors - 1;
