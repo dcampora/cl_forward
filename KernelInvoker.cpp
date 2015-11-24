@@ -25,17 +25,17 @@ int invokeParallelSearch(
   // Startup settings
   // Now we are going to call with number_of_sensors - 4
   int fillCandidates_blocks = (number_of_sensors - 4);
-  size_t fillCandidates_global_work_size[2] = { (size_t) NUMTHREADS_X * fillCandidates_blocks, 4 };
-  size_t fillCandidates_local_work_size[2] = { (size_t) NUMTHREADS_X, 4 };
+  size_t fillCandidates_global_work_size[2] = { (size_t) NUMTHREADS_X * fillCandidates_blocks, 1 };
+  size_t fillCandidates_local_work_size[2] = { (size_t) NUMTHREADS_X, 1 };
   cl_uint fillCandidates_work_dim = 2;
 
   int searchByTriplets_blocks = (number_of_sensors - 4);
-  size_t searchByTriplets_global_work_size[2] = { (size_t) NUMTHREADS_X * searchByTriplets_blocks, 4 };
-  size_t searchByTriplets_local_work_size[2] = { (size_t) NUMTHREADS_X, 4 };
+  size_t searchByTriplets_global_work_size[2] = { (size_t) NUMTHREADS_X * searchByTriplets_blocks, 1 };
+  size_t searchByTriplets_local_work_size[2] = { (size_t) NUMTHREADS_X, 1 };
   cl_uint searchByTriplets_work_dim = 2;
 
-  size_t trackForwarding_global_work_size[2] = { (size_t) NUMTHREADS_X, 4 };
-  size_t trackForwarding_local_work_size[2] = { (size_t) NUMTHREADS_X, 4 };
+  size_t trackForwarding_global_work_size[2] = { (size_t) NUMTHREADS_X, 1 };
+  size_t trackForwarding_local_work_size[2] = { (size_t) NUMTHREADS_X, 1 };
   cl_uint trackForwarding_work_dim = 2;
 
   // Choose platform according to the macro DEVICE_PREFERENCE
@@ -62,6 +62,7 @@ int invokeParallelSearch(
   const char* buildOptions = "";
   // const char* buildOptions = "-cl-nv-maxrregcount=32";
   // const char* buildOptions = "-g -s /home/dcampora/nfs/projects/gpu/tf_opencl/KernelDefinitions.cl -s /home/dcampora/nfs/projects/gpu/tf_opencl/kernel_searchByTriplets.cl"; 
+  // const char* buildOptions = "-g -s \"/home/dcampora/projects/gpu/cl_forward_one_event/Kernel.cl\"";
   cl_int status = clBuildProgram(program, 1, devices, buildOptions, NULL, NULL);
 
   if (status != CL_SUCCESS) {
@@ -172,8 +173,8 @@ int invokeParallelSearch(
   
   // Adding timing
   // Timing calculation
-  unsigned int niterations = 4;
-  unsigned int nexperiments = 4;
+  unsigned int niterations = 1;
+  unsigned int nexperiments = 1;
 
   std::vector<std::vector<float>> times_fillCandidates {nexperiments};
   std::vector<std::vector<float>> times_searchByTriplets {nexperiments};
@@ -217,15 +218,15 @@ int invokeParallelSearch(
 
       cl_event event_searchByTriplets, event_fillCandidates, event_trackForwarding;
 
-      // DEBUG << "Calling fillCandidates with: " << std::endl
-      //   << " work_dim: " << fillCandidates_work_dim << std::endl
-      //   << " global_work_size: " << fillCandidates_global_work_size[0] << ", " << fillCandidates_global_work_size[1] << std::endl
-      //   << " local_work_size: " << fillCandidates_local_work_size[0] << ", " << fillCandidates_local_work_size[1] << std::endl << std::endl;
+      DEBUG << "Calling fillCandidates with: " << std::endl
+        << " work_dim: " << fillCandidates_work_dim << std::endl
+        << " global_work_size: " << fillCandidates_global_work_size[0] << ", " << fillCandidates_global_work_size[1] << std::endl
+        << " local_work_size: " << fillCandidates_local_work_size[0] << ", " << fillCandidates_local_work_size[1] << std::endl << std::endl;
 
       // DEBUG << "fc" << std::endl;
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_fillCandidates, fillCandidates_work_dim, NULL, fillCandidates_global_work_size, fillCandidates_local_work_size, 0, NULL, &event_fillCandidates));
       clCheck(clFinish(commandQueue));
-      // DEBUG << "tc" << std::endl;
+      DEBUG << "tc" << std::endl;
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_searchByTriplets, searchByTriplets_work_dim, NULL, searchByTriplets_global_work_size, searchByTriplets_local_work_size, 0, NULL, &event_searchByTriplets));
       clCheck(clFinish(commandQueue));
       // DEBUG << "tf" << std::endl;
@@ -250,11 +251,11 @@ int invokeParallelSearch(
       tduration = tend - tstart;
       times_searchByTriplets[i].push_back(tduration / 1000000.0f);
 
-      clGetEventProfilingInfo(event_trackForwarding, CL_PROFILING_COMMAND_START, sizeof(cl_ulong) , &tstart, NULL);
-      clGetEventProfilingInfo(event_trackForwarding, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &tend, NULL);
-      clReleaseEvent(event_trackForwarding);
-      tduration = tend - tstart;
-      times_trackForwarding[i].push_back(tduration / 1000000.0f);
+      // clGetEventProfilingInfo(event_trackForwarding, CL_PROFILING_COMMAND_START, sizeof(cl_ulong) , &tstart, NULL);
+      // clGetEventProfilingInfo(event_trackForwarding, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &tend, NULL);
+      // clReleaseEvent(event_trackForwarding);
+      // tduration = tend - tstart;
+      // times_trackForwarding[i].push_back(tduration / 1000000.0f);
 
       DEBUG << "." << std::flush;
     }
