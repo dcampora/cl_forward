@@ -25,17 +25,18 @@ int invokeParallelSearch(
   // Startup settings
   // Now we are going to call with number_of_sensors - 4
   int fillCandidates_blocks = (number_of_sensors - 4);
-  size_t fillCandidates_global_work_size[2] = { (size_t) NUMTHREADS_X * fillCandidates_blocks, 1 };
-  size_t fillCandidates_local_work_size[2] = { (size_t) NUMTHREADS_X, 1 };
+  size_t fillCandidates_global_work_size[2] = { (size_t) NUMTHREADS_X * fillCandidates_blocks, 4 };
+  size_t fillCandidates_local_work_size[2] = { (size_t) NUMTHREADS_X, 4 };
   cl_uint fillCandidates_work_dim = 2;
 
   int searchByTriplets_blocks = (number_of_sensors - 4);
-  size_t searchByTriplets_global_work_size[2] = { (size_t) NUMTHREADS_X * searchByTriplets_blocks, 1 };
-  size_t searchByTriplets_local_work_size[2] = { (size_t) NUMTHREADS_X, 1 };
+  size_t searchByTriplets_global_work_size[2] = { (size_t) NUMTHREADS_X * searchByTriplets_blocks, 4 };
+  size_t searchByTriplets_local_work_size[2] = { (size_t) NUMTHREADS_X, 4 };
   cl_uint searchByTriplets_work_dim = 2;
 
-  size_t trackForwarding_global_work_size[2] = { (size_t) NUMTHREADS_X, 1 };
-  size_t trackForwarding_local_work_size[2] = { (size_t) NUMTHREADS_X, 1 };
+  int trackForwarding_blocks = (number_of_sensors - 5);
+  size_t trackForwarding_global_work_size[2] = { (size_t) NUMTHREADS_X * trackForwarding_blocks, 4 };
+  size_t trackForwarding_local_work_size[2] = { (size_t) NUMTHREADS_X, 4 };
   cl_uint trackForwarding_work_dim = 2;
 
   // Choose platform according to the macro DEVICE_PREFERENCE
@@ -105,7 +106,7 @@ int invokeParallelSearch(
 
   // Allocate GPU buffers
   cl_mem dev_tracks = clCreateBuffer(context, CL_MEM_READ_WRITE, MAX_TRACKS * sizeof(Track), NULL, &errcode_ret); checkClError(errcode_ret);
-  cl_mem dev_tracklets = clCreateBuffer(context, CL_MEM_READ_WRITE, acc_hits * sizeof(Track), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_tracklets = clCreateBuffer(context, CL_MEM_READ_WRITE, number_of_sensors * MAX_TRACKS_PER_SENSOR * sizeof(Track), NULL, &errcode_ret); checkClError(errcode_ret);
   cl_mem dev_weak_tracks = clCreateBuffer(context, CL_MEM_READ_WRITE, acc_hits * sizeof(cl_int), NULL, &errcode_ret); checkClError(errcode_ret);
   cl_mem dev_tracks_to_follow = clCreateBuffer(context, CL_MEM_READ_WRITE, number_of_sensors * TTF_MODULO * sizeof(cl_int), NULL, &errcode_ret); checkClError(errcode_ret);
   cl_mem dev_atomicsStorage = clCreateBuffer(context, CL_MEM_READ_WRITE, number_of_sensors * atomic_space * sizeof(cl_int), NULL, &errcode_ret); checkClError(errcode_ret);
@@ -229,9 +230,9 @@ int invokeParallelSearch(
       DEBUG << "tc" << std::endl;
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_searchByTriplets, searchByTriplets_work_dim, NULL, searchByTriplets_global_work_size, searchByTriplets_local_work_size, 0, NULL, &event_searchByTriplets));
       clCheck(clFinish(commandQueue));
-      // DEBUG << "tf" << std::endl;
-      // clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_trackForwarding, trackForwarding_work_dim, NULL, trackForwarding_global_work_size, trackForwarding_local_work_size, 0, NULL, &event_trackForwarding));
-      // clCheck(clFinish(commandQueue));
+      DEBUG << "tf" << std::endl;
+      clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_trackForwarding, trackForwarding_work_dim, NULL, trackForwarding_global_work_size, trackForwarding_local_work_size, 0, NULL, &event_trackForwarding));
+      clCheck(clFinish(commandQueue));
   
       // Start and end of event
       unsigned long tstart = 0;
@@ -251,11 +252,11 @@ int invokeParallelSearch(
       tduration = tend - tstart;
       times_searchByTriplets[i].push_back(tduration / 1000000.0f);
 
-      // clGetEventProfilingInfo(event_trackForwarding, CL_PROFILING_COMMAND_START, sizeof(cl_ulong) , &tstart, NULL);
-      // clGetEventProfilingInfo(event_trackForwarding, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &tend, NULL);
-      // clReleaseEvent(event_trackForwarding);
-      // tduration = tend - tstart;
-      // times_trackForwarding[i].push_back(tduration / 1000000.0f);
+      clGetEventProfilingInfo(event_trackForwarding, CL_PROFILING_COMMAND_START, sizeof(cl_ulong) , &tstart, NULL);
+      clGetEventProfilingInfo(event_trackForwarding, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &tend, NULL);
+      clReleaseEvent(event_trackForwarding);
+      tduration = tend - tstart;
+      times_trackForwarding[i].push_back(tduration / 1000000.0f);
 
       DEBUG << "." << std::flush;
     }
@@ -316,6 +317,7 @@ int invokeParallelSearch(
   for (auto i=0; i<nexperiments; ++i){
     mresults_fillCandidates[i] = calcResults(times_fillCandidates[i]);
     mresults_searchByTriplets[i] = calcResults(times_searchByTriplets[i]);
+    mresults_trackForwarding[i] = calcResults(times_trackForwarding[i]);
 
     DEBUG << " nthreads (" << NUMTHREADS_X << ", " << (nexperiments==1 ? fillCandidates_local_work_size[1] : i+1) <<  "):" << std::endl;
     DEBUG << "  fillCandidates: " << mresults_fillCandidates[i]["mean"] << " ms (std dev " << mresults_fillCandidates[i]["deviation"] << ")" << std::endl;
