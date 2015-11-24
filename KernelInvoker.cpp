@@ -193,8 +193,8 @@ int invokeParallelSearch(
   
   // Adding timing
   // Timing calculation
-  unsigned int niterations = 1;
-  unsigned int nexperiments = 1;
+  unsigned int niterations = 4;
+  unsigned int nexperiments = 4;
 
   std::vector<std::vector<float>> times_fillCandidates {nexperiments};
   std::vector<std::vector<float>> times_searchByTriplets {nexperiments};
@@ -240,21 +240,14 @@ int invokeParallelSearch(
 
       cl_event event_searchByTriplets, event_fillCandidates, event_trackForwarding, event_cloneKiller;
 
-      DEBUG << "Calling fillCandidates with: " << std::endl
-        << " work_dim: " << fillCandidates_work_dim << std::endl
-        << " global_work_size: " << fillCandidates_global_work_size[0] << ", " << fillCandidates_global_work_size[1] << std::endl
-        << " local_work_size: " << fillCandidates_local_work_size[0] << ", " << fillCandidates_local_work_size[1] << std::endl << std::endl;
+      // DEBUG << "Calling fillCandidates with: " << std::endl
+      //   << " work_dim: " << fillCandidates_work_dim << std::endl
+      //   << " global_work_size: " << fillCandidates_global_work_size[0] << ", " << fillCandidates_global_work_size[1] << std::endl
+      //   << " local_work_size: " << fillCandidates_local_work_size[0] << ", " << fillCandidates_local_work_size[1] << std::endl << std::endl;
 
-      DEBUG << "fc" << std::endl;
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_fillCandidates, fillCandidates_work_dim, NULL, fillCandidates_global_work_size, fillCandidates_local_work_size, 0, NULL, &event_fillCandidates));
-      clCheck(clFinish(commandQueue));
-      DEBUG << "tc" << std::endl;
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_searchByTriplets, searchByTriplets_work_dim, NULL, searchByTriplets_global_work_size, searchByTriplets_local_work_size, 0, NULL, &event_searchByTriplets));
-      clCheck(clFinish(commandQueue));
-      DEBUG << "tf" << std::endl;
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_trackForwarding, trackForwarding_work_dim, NULL, trackForwarding_global_work_size, trackForwarding_local_work_size, 0, NULL, &event_trackForwarding));
-      clCheck(clFinish(commandQueue));
-      DEBUG << "ck" << std::endl;
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_cloneKiller, cloneKiller_work_dim, NULL, cloneKiller_global_work_size, cloneKiller_local_work_size, 0, NULL, &event_cloneKiller));
       clCheck(clFinish(commandQueue));
   
