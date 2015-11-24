@@ -39,6 +39,10 @@ int invokeParallelSearch(
   size_t trackForwarding_local_work_size[2] = { (size_t) NUMTHREADS_X, 4 };
   cl_uint trackForwarding_work_dim = 2;
 
+  size_t cloneKiller_global_work_size[1] = { (size_t) NUMTHREADS_X };
+  size_t cloneKiller_local_work_size[1] = { (size_t) NUMTHREADS_X };
+  cl_uint cloneKiller_work_dim = 1;
+
   // Choose platform according to the macro DEVICE_PREFERENCE
   cl_device_id* devices;
   cl_platform_id platform = NULL;
@@ -100,12 +104,13 @@ int invokeParallelSearch(
   acc_hits += event->numberOfHits;
   
   // Allocate CPU buffers
-  const int atomic_space = NUM_ATOMICS + 1;
+  const int atomic_space = NUM_ATOMICS + 2;
   int* atomics = (int*) malloc(number_of_sensors * atomic_space * sizeof(int));  
   int* hit_candidates = (int*) malloc(2 * acc_hits * sizeof(int));
 
   // Allocate GPU buffers
   cl_mem dev_tracks = clCreateBuffer(context, CL_MEM_READ_WRITE, MAX_TRACKS * sizeof(Track), NULL, &errcode_ret); checkClError(errcode_ret);
+  cl_mem dev_tracks_per_sensor = clCreateBuffer(context, CL_MEM_READ_WRITE, number_of_sensors * MAX_TRACKS_PER_SENSOR * sizeof(Track), NULL, &errcode_ret); checkClError(errcode_ret);
   cl_mem dev_tracklets = clCreateBuffer(context, CL_MEM_READ_WRITE, number_of_sensors * MAX_TRACKS_PER_SENSOR * sizeof(Track), NULL, &errcode_ret); checkClError(errcode_ret);
   cl_mem dev_weak_tracks = clCreateBuffer(context, CL_MEM_READ_WRITE, acc_hits * sizeof(cl_int), NULL, &errcode_ret); checkClError(errcode_ret);
   cl_mem dev_tracks_to_follow = clCreateBuffer(context, CL_MEM_READ_WRITE, number_of_sensors * TTF_MODULO * sizeof(cl_int), NULL, &errcode_ret); checkClError(errcode_ret);
@@ -130,7 +135,7 @@ int invokeParallelSearch(
   cl_kernel kernel_fillCandidates = clCreateKernel(program, "clFillCandidates", NULL);
   cl_kernel kernel_searchByTriplets = clCreateKernel(program, "clSearchByTriplets", NULL);
   cl_kernel kernel_trackForwarding = clCreateKernel(program, "clTrackForwarding", NULL);
-  // cl_kernel kernel_cloneKilling = clCreateKernel(program, "clCloneKilling", NULL);
+  cl_kernel kernel_cloneKiller = clCreateKernel(program, "clCloneKiller", NULL);
 
   // Step 9: Sets kernel_searchByTriplets arguments 
   clCheck(clSetKernelArg(kernel_fillCandidates, 0, sizeof(cl_mem), (void *) &dev_tracks));
@@ -159,7 +164,7 @@ int invokeParallelSearch(
   clCheck(clSetKernelArg(kernel_searchByTriplets, 10, sizeof(cl_mem), (void *) &dev_hit_candidates));
   clCheck(clSetKernelArg(kernel_searchByTriplets, 11, sizeof(cl_mem), (void *) &dev_hit_h2_candidates));
 
-  clCheck(clSetKernelArg(kernel_trackForwarding, 0, sizeof(cl_mem), (void *) &dev_tracks));
+  clCheck(clSetKernelArg(kernel_trackForwarding, 0, sizeof(cl_mem), (void *) &dev_tracks_per_sensor));
   clCheck(clSetKernelArg(kernel_trackForwarding, 1, sizeof(cl_mem), (void *) &dev_input));
   clCheck(clSetKernelArg(kernel_trackForwarding, 2, sizeof(cl_mem), (void *) &dev_tracks_to_follow));
   clCheck(clSetKernelArg(kernel_trackForwarding, 3, sizeof(cl_mem), (void *) &dev_hit_used));
@@ -171,6 +176,20 @@ int invokeParallelSearch(
   clCheck(clSetKernelArg(kernel_trackForwarding, 9, sizeof(cl_mem), (void *) &dev_best_fits));
   clCheck(clSetKernelArg(kernel_trackForwarding, 10, sizeof(cl_mem), (void *) &dev_hit_candidates));
   clCheck(clSetKernelArg(kernel_trackForwarding, 11, sizeof(cl_mem), (void *) &dev_hit_h2_candidates));
+
+  clCheck(clSetKernelArg(kernel_cloneKiller, 0, sizeof(cl_mem), (void *) &dev_tracks));
+  clCheck(clSetKernelArg(kernel_cloneKiller, 1, sizeof(cl_mem), (void *) &dev_input));
+  clCheck(clSetKernelArg(kernel_cloneKiller, 2, sizeof(cl_mem), (void *) &dev_tracks_to_follow));
+  clCheck(clSetKernelArg(kernel_cloneKiller, 3, sizeof(cl_mem), (void *) &dev_hit_used));
+  clCheck(clSetKernelArg(kernel_cloneKiller, 4, sizeof(cl_mem), (void *) &dev_atomicsStorage));
+  clCheck(clSetKernelArg(kernel_cloneKiller, 5, sizeof(cl_mem), (void *) &dev_tracklets));
+  clCheck(clSetKernelArg(kernel_cloneKiller, 6, sizeof(cl_mem), (void *) &dev_weak_tracks));
+  clCheck(clSetKernelArg(kernel_cloneKiller, 7, sizeof(cl_mem), (void *) &dev_event_offsets));
+  clCheck(clSetKernelArg(kernel_cloneKiller, 8, sizeof(cl_mem), (void *) &dev_hit_offsets));
+  clCheck(clSetKernelArg(kernel_cloneKiller, 9, sizeof(cl_mem), (void *) &dev_best_fits));
+  clCheck(clSetKernelArg(kernel_cloneKiller, 10, sizeof(cl_mem), (void *) &dev_hit_candidates));
+  clCheck(clSetKernelArg(kernel_cloneKiller, 11, sizeof(cl_mem), (void *) &dev_hit_h2_candidates));
+  clCheck(clSetKernelArg(kernel_cloneKiller, 12, sizeof(cl_mem), (void *) &dev_tracks_per_sensor));
   
   // Adding timing
   // Timing calculation
@@ -180,9 +199,11 @@ int invokeParallelSearch(
   std::vector<std::vector<float>> times_fillCandidates {nexperiments};
   std::vector<std::vector<float>> times_searchByTriplets {nexperiments};
   std::vector<std::vector<float>> times_trackForwarding {nexperiments};
+  std::vector<std::vector<float>> times_cloneKiller {nexperiments};
   std::vector<std::map<std::string, float>> mresults_fillCandidates {nexperiments};
   std::vector<std::map<std::string, float>> mresults_searchByTriplets {nexperiments};
   std::vector<std::map<std::string, float>> mresults_trackForwarding {nexperiments};
+  std::vector<std::map<std::string, float>> mresults_cloneKiller {nexperiments};
 
   // Get and log the OpenCL device name
   char deviceName [1024];
@@ -217,14 +238,14 @@ int invokeParallelSearch(
       clInitializeValue<cl_int>(commandQueue, dev_tracks_to_follow, number_of_sensors * TTF_MODULO, 0);
       clCheck(clFinish(commandQueue));
 
-      cl_event event_searchByTriplets, event_fillCandidates, event_trackForwarding;
+      cl_event event_searchByTriplets, event_fillCandidates, event_trackForwarding, event_cloneKiller;
 
       DEBUG << "Calling fillCandidates with: " << std::endl
         << " work_dim: " << fillCandidates_work_dim << std::endl
         << " global_work_size: " << fillCandidates_global_work_size[0] << ", " << fillCandidates_global_work_size[1] << std::endl
         << " local_work_size: " << fillCandidates_local_work_size[0] << ", " << fillCandidates_local_work_size[1] << std::endl << std::endl;
 
-      // DEBUG << "fc" << std::endl;
+      DEBUG << "fc" << std::endl;
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_fillCandidates, fillCandidates_work_dim, NULL, fillCandidates_global_work_size, fillCandidates_local_work_size, 0, NULL, &event_fillCandidates));
       clCheck(clFinish(commandQueue));
       DEBUG << "tc" << std::endl;
@@ -232,6 +253,9 @@ int invokeParallelSearch(
       clCheck(clFinish(commandQueue));
       DEBUG << "tf" << std::endl;
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_trackForwarding, trackForwarding_work_dim, NULL, trackForwarding_global_work_size, trackForwarding_local_work_size, 0, NULL, &event_trackForwarding));
+      clCheck(clFinish(commandQueue));
+      DEBUG << "ck" << std::endl;
+      clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_cloneKiller, cloneKiller_work_dim, NULL, cloneKiller_global_work_size, cloneKiller_local_work_size, 0, NULL, &event_cloneKiller));
       clCheck(clFinish(commandQueue));
   
       // Start and end of event
@@ -257,6 +281,12 @@ int invokeParallelSearch(
       clReleaseEvent(event_trackForwarding);
       tduration = tend - tstart;
       times_trackForwarding[i].push_back(tduration / 1000000.0f);
+
+      clGetEventProfilingInfo(event_cloneKiller, CL_PROFILING_COMMAND_START, sizeof(cl_ulong) , &tstart, NULL);
+      clGetEventProfilingInfo(event_cloneKiller, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &tend, NULL);
+      clReleaseEvent(event_cloneKiller);
+      tduration = tend - tstart;
+      times_cloneKiller[i].push_back(tduration / 1000000.0f);
 
       DEBUG << "." << std::flush;
     }
@@ -318,23 +348,27 @@ int invokeParallelSearch(
     mresults_fillCandidates[i] = calcResults(times_fillCandidates[i]);
     mresults_searchByTriplets[i] = calcResults(times_searchByTriplets[i]);
     mresults_trackForwarding[i] = calcResults(times_trackForwarding[i]);
+    mresults_cloneKiller[i] = calcResults(times_cloneKiller[i]);
 
     DEBUG << " nthreads (" << NUMTHREADS_X << ", " << (nexperiments==1 ? fillCandidates_local_work_size[1] : i+1) <<  "):" << std::endl;
     DEBUG << "  fillCandidates: " << mresults_fillCandidates[i]["mean"] << " ms (std dev " << mresults_fillCandidates[i]["deviation"] << ")" << std::endl;
     DEBUG << "  searchByTriplets: " << mresults_searchByTriplets[i]["mean"] << " ms (std dev " << mresults_searchByTriplets[i]["deviation"] << ")" << std::endl;
-    DEBUG << "  trackForwarding: " << mresults_trackForwarding[i]["mean"] << " ms (std dev " << mresults_trackForwarding[i]["deviation"] << ")" << std::endl << std::endl;
+    DEBUG << "  trackForwarding: " << mresults_trackForwarding[i]["mean"] << " ms (std dev " << mresults_trackForwarding[i]["deviation"] << ")" << std::endl;
+    DEBUG << "  cloneKiller: " << mresults_cloneKiller[i]["mean"] << " ms (std dev " << mresults_cloneKiller[i]["deviation"] << ")" << std::endl << std::endl;
   }
 
   // Step 12: Clean the resources
   clCheck(clReleaseKernel(kernel_fillCandidates));
   clCheck(clReleaseKernel(kernel_searchByTriplets));
   clCheck(clReleaseKernel(kernel_trackForwarding));
+  clCheck(clReleaseKernel(kernel_cloneKiller));
 
   clCheck(clReleaseProgram(program));
   clCheck(clReleaseCommandQueue(commandQueue));
   clCheck(clReleaseContext(context));
 
   clCheck(clReleaseMemObject(dev_tracks));
+  clCheck(clReleaseMemObject(dev_tracks_per_sensor));
   clCheck(clReleaseMemObject(dev_tracklets));
   clCheck(clReleaseMemObject(dev_weak_tracks));
   clCheck(clReleaseMemObject(dev_tracks_to_follow));
