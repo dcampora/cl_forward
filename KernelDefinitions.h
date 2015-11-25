@@ -24,9 +24,9 @@
 #define TTF_MODULO 2000
 
 #define PARAM_W 3966.94f // 0.050 / sqrt( 12. )
-#define PARAM_MAXXSLOPE 0.4f
-#define PARAM_MAXYSLOPE 0.3f
-#define PARAM_MAXXSLOPE_CANDIDATES 0.4f
+#define PARAM_MAXXSLOPE 0.7f
+#define PARAM_MAXYSLOPE 0.7f
+#define PARAM_MAXXSLOPE_CANDIDATES 0.7f
 
 #define PARAM_TOLERANCE 0.6f
 #define PARAM_TOLERANCE_CANDIDATES 0.6f
@@ -37,6 +37,14 @@
 
 #define PRINT_SOLUTION true
 #define PRINT_VERBOSE true
+#define ASSERTS_ENABLED false
+
+#if ASSERTS_ENABLED == true
+#include "assert.h"
+#define ASSERT(EXPR) ASSERT_CL_RETURN(EXPR, #EXPR);
+#else
+#define ASSERT(EXPR) 
+#endif
 
 struct Sensor {
     unsigned int hitStart;
