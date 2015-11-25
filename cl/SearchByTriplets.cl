@@ -5,7 +5,7 @@ void trackCreation(
 #endif
   __global const float* const hit_Xs, __global const float* const hit_Ys, __global const float* const hit_Zs,
   __local int* const sensor_data, __global int* const hit_candidates, __global int* const max_numhits_to_process,
-  __global int* const hit_h2_candidates, const int blockDim_sh_hit, __global float* const best_fits,
+  __global int* const hit_h2_candidates, const int blockDim_sh_hit, __global int* const best_fits,
   __global int* const tracklets_insertPointer, __global int* const ttf_insertPointer,
   __global struct Track* const tracklets, __global int* const tracks_to_follow,
   const int h0_index, bool inside_bounds) {
@@ -18,6 +18,7 @@ void trackCreation(
 
   unsigned int num_h1_to_process = 0;
   float best_fit = MAX_FLOAT;
+  bool best_fit_found = false;
 
   // We will repeat this for performance reasons
   if (inside_bounds) {
@@ -118,6 +119,8 @@ void trackCreation(
               const float fit = condition * scatter + !condition * MAX_FLOAT; 
 
               const bool fit_is_better = fit < best_fit;
+              best_fit_found |= fit_is_better;
+
               best_fit = fit_is_better * fit + !fit_is_better * best_fit;
               best_hit_h1 = fit_is_better * (h1_index) + !fit_is_better * best_hit_h1;
               best_hit_h2 = fit_is_better * (h2_index) + !fit_is_better * best_hit_h2;
@@ -129,23 +132,14 @@ void trackCreation(
   }
 
   // Compare / Mix the results from the get_local_size(1) threads
-  best_fits[get_local_id(0) * get_local_size(1) + get_local_id(1)] = best_fit;
-
+  const int local_id = get_local_id(0);
+  const int val_best_fit = *((int*) &best_fit);
+  const int old_best_fit = atomic_min(best_fits + get_local_id(0), val_best_fit);
   barrier(CLK_GLOBAL_MEM_FENCE);
+  const int new_best_fit = best_fits[get_local_id(0)];
 
-  bool accept_track = false;
-  if (h0_index != -1 && best_fit != MAX_FLOAT) {
-    best_fit = MAX_FLOAT;
-    int threadIdx_y_winner = -1;
-    for (int i=0; i<get_local_size(1); ++i) {
-      const float fit = best_fits[get_local_id(0) * get_local_size(1) + i];
-      if (fit < best_fit) {
-        best_fit = fit;
-        threadIdx_y_winner = i;
-      }
-    }
-    accept_track = get_local_id(1) == threadIdx_y_winner;
-  }
+  const bool accept_track = (h0_index != -1) && best_fit_found &&
+    (old_best_fit != val_best_fit) && (new_best_fit == val_best_fit);
 
   // We have a best fit! - haven't we?
   // Only go through the tracks on the selected thread
@@ -195,7 +189,7 @@ __kernel void clSearchByTriplets(__global struct Track* const dev_tracks, __glob
   __global int* const dev_tracks_to_follow, __global bool* const dev_hit_used,
   __global int* const dev_atomicsStorage, __global struct Track* const dev_tracklets,
   __global int* const dev_weak_tracks, __global int* const dev_event_offsets,
-  __global int* const dev_hit_offsets, __global float* const dev_best_fits,
+  __global int* const dev_hit_offsets, __global int* const dev_best_fits,
   __global int* const dev_hit_candidates, __global int* const dev_hit_h2_candidates) {
   
   // Data initialization
@@ -225,7 +219,7 @@ __kernel void clSearchByTriplets(__global struct Track* const dev_tracks, __glob
 
   __global int* const tracks_to_follow = dev_tracks_to_follow + sensor_id * TTF_MODULO;
   __global struct Track* const tracklets = dev_tracklets + hit_offset;
-  __global float* const best_fits = dev_best_fits + sensor_id * blockDim_product;
+  __global int* const best_fits = dev_best_fits + sensor_id * get_local_size(0);
 
   __global unsigned int* const tracks_insertPointer = (__global unsigned int*) dev_atomicsStorage;
   __global unsigned int* const weaktracks_insertPointer = (__global unsigned int*) dev_atomicsStorage + 1;

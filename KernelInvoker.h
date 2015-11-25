@@ -12,6 +12,7 @@
 #include <vector>
 #include <iomanip>
 #include <map>
+#include <algorithm>
 #include <stdint.h>
 #include <assert.h>
 
