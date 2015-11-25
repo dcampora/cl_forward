@@ -9,7 +9,7 @@
 #define NUMTHREADS_X 64
 #define MAX_NUMTHREADS_Y 64
 #define TF_NUMTHREADS_X 64
-#define TF_NUMTHREADS_Y 1
+#define TF_NUMTHREADS_Y 4
 #define NUM_ATOMICS 5
 #define USE_SHARED_FOR_HITS false
 #define SH_HIT_MULT 2
