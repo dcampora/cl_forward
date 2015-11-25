@@ -245,10 +245,10 @@ __kernel void clTrackForwarding(__global struct Track* const dev_tracks_per_sens
   const int blockDim_sh_hit = NUMTHREADS_X * cond_sh_hit_mult;
 
   // Let's do the Track Forwarding sequentially now
-  unsigned int prev_ttf, last_ttf = 0;
+  unsigned int prev_ttf, last_ttf = 0, diff_ttf = 1;
   int first_sensor = 50 - sensor_id;
 
-  while (first_sensor >= 4) {
+  while (first_sensor >= 4 && diff_ttf > 0) {
 
     // Update sensor data
     if (get_local_id(0) < 6 && get_local_id(1) == 0) {
@@ -259,7 +259,7 @@ __kernel void clTrackForwarding(__global struct Track* const dev_tracks_per_sens
 
     prev_ttf = last_ttf;
     last_ttf = ttf_insertPointer[0];
-    const unsigned int diff_ttf = last_ttf - prev_ttf;
+    diff_ttf = last_ttf - prev_ttf;
 
     barrier(CLK_GLOBAL_MEM_FENCE | CLK_LOCAL_MEM_FENCE);
 
@@ -296,7 +296,7 @@ __kernel void clTrackForwarding(__global struct Track* const dev_tracks_per_sens
   // Process the last bunch of track_to_follows
   prev_ttf = last_ttf;
   last_ttf = ttf_insertPointer[0];
-  const unsigned int diff_ttf = last_ttf - prev_ttf;
+  diff_ttf = last_ttf - prev_ttf;
 
   for (int i=0; i<(diff_ttf + blockDim_product - 1) / blockDim_product; ++i) {
     const unsigned int ttf_element = blockDim_product * i + get_local_id(1) * get_local_size(0) + get_local_id(0);
