@@ -40,6 +40,14 @@
 
 #define PRINT_SOLUTION true
 #define PRINT_VERBOSE true
+#define ASSERTS_ENABLED false
+
+#if ASSERTS_ENABLED == true
+#include "assert.h"
+#define ASSERT(EXPR) ASSERT_CL_RETURN(EXPR, #EXPR);
+#else
+#define ASSERT(EXPR) 
+#endif
 
 struct Sensor {
     unsigned int hitStart;
