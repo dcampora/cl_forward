@@ -17,7 +17,7 @@
 set( SAMPLE_NAME clpixel )
 set( SOURCE_FILES Tools.cpp Logger.cpp KernelInvoker.cpp
 GpuPixelSearchByTriplet.cpp IndependentEntrypoint.cpp )
-set( EXTRA_FILES cl/FillCandidates.cl cl/SearchByTriplets.cl cl/TrackForwarding.cl cl/CloneKiller.cl cl/KernelDefinitions.h )
+set( EXTRA_FILES FillCandidates.cl SearchByTriplets.cl TrackForwarding.cl CloneKiller.cl KernelDefinitions.h )
 
 ############################################################################
 
