@@ -54,11 +54,15 @@ int invokeParallelSearch(
   // Step 4: Creating command queue associate with the context
   cl_command_queue commandQueue = clCreateCommandQueue(context, devices[DEVICE_NUMBER], CL_QUEUE_PROFILING_ENABLE, NULL);
 
-  // Step 5: Create program object - KernelDefinitions.h + kernel_searchByTriplets.cl
-  std::string definitions_str = "", kernel_str = "", source_str;
-  // clCheck(convertClToString("KernelDefinitions.h", definitions_str));
-  clCheck(convertClToString("Kernel.cl", kernel_str));
-  source_str = definitions_str + kernel_str;
+  // Step 5: Create program object
+  std::vector<std::string> source_files =
+    {"KernelDefinitions.h", "FillCandidates.cl", "SearchByTriplets.cl", "TrackForwarding.cl", "CloneKiller.cl"};
+  std::string source_str = "";
+  for (auto s : source_files) {
+    std::string temp_str;
+    clCheck(convertClToString(s.c_str(), temp_str));
+    source_str += temp_str;
+  }
   const char* source = source_str.c_str();
   size_t sourceSize[] = { source_str.size() };
   cl_program program = clCreateProgramWithSource(context, 1, &source, sourceSize, NULL);
@@ -239,11 +243,6 @@ int invokeParallelSearch(
       clCheck(clFinish(commandQueue));
 
       cl_event event_searchByTriplets, event_fillCandidates, event_trackForwarding, event_cloneKiller;
-
-      // DEBUG << "Calling fillCandidates with: " << std::endl
-      //   << " work_dim: " << fillCandidates_work_dim << std::endl
-      //   << " global_work_size: " << fillCandidates_global_work_size[0] << ", " << fillCandidates_global_work_size[1] << std::endl
-      //   << " local_work_size: " << fillCandidates_local_work_size[0] << ", " << fillCandidates_local_work_size[1] << std::endl << std::endl;
 
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_fillCandidates, fillCandidates_work_dim, NULL, fillCandidates_global_work_size, fillCandidates_local_work_size, 0, NULL, &event_fillCandidates));
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_searchByTriplets, searchByTriplets_work_dim, NULL, searchByTriplets_global_work_size, searchByTriplets_local_work_size, 0, NULL, &event_searchByTriplets));
