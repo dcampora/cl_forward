@@ -7,6 +7,6 @@
 #include <cfloat>
 #include <vector>
 
-#include "cl/KernelDefinitions.h"
+#include "KernelDefinitions.h"
 
 #endif
