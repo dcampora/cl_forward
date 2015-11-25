@@ -67,10 +67,10 @@ int invokeParallelSearch(
   cl_program program = clCreateProgramWithSource(context, 1, &source, sourceSize, NULL);
   
   // Step 6: Build program
-  // const char* buildOptions = "";
+  const char* buildOptions = "";
   // const char* buildOptions = "-cl-nv-maxrregcount=32";
   // const char* buildOptions = "-g -s /home/dcampora/nfs/projects/gpu/tf_opencl/KernelDefinitions.cl -s /home/dcampora/nfs/projects/gpu/tf_opencl/kernel_searchByTriplets.cl"; 
-  const char* buildOptions = "-g -s \"/home/dcampora/projects/gpu/cl_forward_one_event/cl/TrackForwarding.cl\"";
+  // const char* buildOptions = "-g -s \"/home/dcampora/projects/gpu/cl_forward_one_event/cl/TrackForwarding.cl\"";
   cl_int status = clBuildProgram(program, 1, devices, buildOptions, NULL, NULL);
 
   if (status != CL_SUCCESS) {
