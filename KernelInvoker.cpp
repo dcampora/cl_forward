@@ -55,7 +55,7 @@ int invokeParallelSearch(
 
   // Step 5: Create program object
   std::vector<std::string> source_files =
-    {"TrackForwarding.cl", "SearchByTriplets.cl", "FillCandidates.cl", "CloneKiller.cl"}; // "KernelDefinitions.h"
+    {"KernelDefinitions.h", "TrackForwarding.cl", "SearchByTriplets.cl", "FillCandidates.cl", "CloneKiller.cl"};
   std::string source_str = "";
   for (auto s : source_files) {
     std::string temp_str;
