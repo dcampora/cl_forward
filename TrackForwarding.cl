@@ -21,172 +21,19 @@ float fitHitToTrack(const float tx, const float ty, const struct CL_Hit* h0, con
   return condition * scatter + !condition * MAX_FLOAT;
 }
 
-void trackForwarding(
-  __global const float* const hit_Xs,
-  __global const float* const hit_Ys,
-  __global const float* const hit_Zs,
-  __global bool* const hit_used,
-  volatile __global int* const tracks_insertPointer,
-  volatile __global int* const ttf_insertPointer,
-  __global int* const weaktracks_insertPointer,
-  __local int* const sensor_data,
-  const unsigned int diff_ttf,
-  const int blockDim_product,
-  __global int* const tracks_to_follow,
-  __global int* const weak_tracks,
-  const unsigned int prev_ttf,
-  __global struct CL_Track* const tracklets,
-  __global struct CL_Track* const tracks,
-  const int sensor_id,
-  __global int* const best_fits) {
-
-  for (int i=0; i<(diff_ttf + get_local_size(0) - 1) / get_local_size(0); ++i) {
-
-    barrier(CLK_GLOBAL_MEM_FENCE);
-    if (get_local_id(1) == 0) {
-      best_fits[get_local_id(0)] = 0x7FFFFFFF;
-    }
-    barrier(CLK_GLOBAL_MEM_FENCE);
-
-    const unsigned int ttf_element = get_local_size(0) * i + get_local_id(0);
-
-    // These variables need to go here, shared memory and scope requirements
-    float tx, ty, h1_z;
-    unsigned int trackno, fulltrackno, skipped_modules, best_hit_h2;
-    struct CL_Track t;
-    struct CL_Hit h0;
-
-    // The logic is broken in two parts for shared memory loading
-    const bool ttf_condition = ttf_element < diff_ttf;
-    if (ttf_condition) {
-      fulltrackno = tracks_to_follow[(prev_ttf + ttf_element) % TTF_MODULO];
-      const bool track_flag = (fulltrackno & 0x80000000) == 0x80000000;
-      skipped_modules = (fulltrackno & 0x70000000) >> 28;
-      trackno = fulltrackno & 0x0FFFFFFF;
-
-      __global const struct CL_Track* const track_pointer = track_flag ? tracklets : tracks;
-
-      t = track_pointer[trackno];
-
-      // Load last two hits in h0, h1
-      const int t_hitsNum = t.hitsNum;
-      const int h0_num = t.hits[t_hitsNum - 2];
-      const int h1_num = t.hits[t_hitsNum - 1];
-
-      h0.x = hit_Xs[h0_num];
-      h0.y = hit_Ys[h0_num];
-      h0.z = hit_Zs[h0_num];
-
-      const float h1_x = hit_Xs[h1_num];
-      const float h1_y = hit_Ys[h1_num];
-      h1_z = hit_Zs[h1_num];
-
-      // CL_Track forwarding over t, for all hits in the next module
-      // Line calculations
-      const float td = 1.0f / (h1_z - h0.z);
-      const float txn = (h1_x - h0.x);
-      const float tyn = (h1_y - h0.y);
-      tx = txn * td;
-      ty = tyn * td;
-    }
-
-    // Search for a best fit
-    // Load shared elements
-    // Iterate in the third list of hits with local_size(1) threads
-    float best_fit = MAX_FLOAT;
-    bool best_fit_found = false;
-    if (ttf_condition) {
-      for (int k=0; k<(sensor_data[SENSOR_DATA_HITNUMS + 2] + get_local_size(1) - 1) / get_local_size(1); ++k) {
-        const int h2_element = get_local_size(1) * k + get_local_id(1);
-        
-        if (h2_element < sensor_data[SENSOR_DATA_HITNUMS + 2]) {
-          const int h2_index = sensor_data[2] + h2_element;
-
-          struct CL_Hit h2;
-          h2.x = hit_Xs[h2_index];
-          h2.y = hit_Ys[h2_index];
-          h2.z = hit_Zs[h2_index];
-
-          const float fit = fitHitToTrack(tx, ty, &h0, h1_z, &h2);
-          const bool fit_is_better = fit < best_fit;
-          best_fit_found |= fit_is_better;
-
-          best_fit = fit_is_better * fit + !fit_is_better * best_fit;
-          best_hit_h2 = fit_is_better * h2_index + !fit_is_better * best_hit_h2;
-        }
-      }
-    }
-
-    // Compare / Mix the results from the get_local_size(1) threads
-    const int val_best_fit = *((int*) &best_fit);
-    const int old_best_fit = atomic_min(best_fits + get_local_id(0), val_best_fit);
-    barrier(CLK_GLOBAL_MEM_FENCE);
-    const int new_best_fit = best_fits[get_local_id(0)];
-    barrier(CLK_GLOBAL_MEM_FENCE);
-
-    const bool accept_forward = best_fit_found &&
-      (old_best_fit != val_best_fit) && (new_best_fit == val_best_fit);
-
-    // We have a best fit!
-    // Fill in t, ONLY in case the best fit is acceptable
-    if (ttf_condition) {
-      if (accept_forward) {
-        // Update the tracks to follow, we'll have to follow up
-        // this track on the next iteration :)
-        t.hits[t.hitsNum++] = best_hit_h2;
-
-        // Update the track in the bag
-        if (t.hitsNum <= 4) {
-          // If it is a track made out of less than or equal than 4 hits,
-          // we have to allocate it in the tracks pointer
-          trackno = atomic_add(tracks_insertPointer, 1);
-        }
-
-        // Copy the track into tracks
-        tracks[trackno] = t;
-
-        // Add the tracks to the bag of tracks to_follow
-        const unsigned int ttfP = atomic_add(ttf_insertPointer, 1) % TTF_MODULO;
-        tracks_to_follow[ttfP] = trackno;
-      }
-      else if (get_local_id(1)==0 && *((float*)&new_best_fit)==MAX_FLOAT) {
-
-        // A track just skipped a module
-        // We keep it for another round
-        if (skipped_modules <= MAX_SKIPPED_MODULES) {
-          // Form the new mask
-          trackno = ((skipped_modules + 1) << 28) | (fulltrackno & 0x8FFFFFFF);
-
-          // Add the tracks to the bag of tracks to_follow
-          const unsigned int ttfP = atomic_add(ttf_insertPointer, 1) % TTF_MODULO;
-          tracks_to_follow[ttfP] = trackno;
-        }
-        // If there are only three hits in this track,
-        // mark it as "doubtful"
-        else if (get_local_id(1)==0 && t.hitsNum == 3) {
-          const unsigned int weakP = atomic_add(weaktracks_insertPointer, 1);
-          weak_tracks[weakP] = (sensor_id << 24) | trackno;
-        }
-        // In the "else" case, we couldn't follow up the track,
-        // so we won't be track following it anymore.
-
-      }
-    }
-  }
-}
-
-__kernel void clTrackForwarding(__global struct CL_Track* const dev_tracks_per_sensor, __global const char* const dev_input,
-  __global int* const dev_tracks_to_follow, __global bool* const dev_hit_used,
-  __global int* const dev_atomicsStorage, __global struct CL_Track* const dev_tracklets,
-  __global int* const dev_weak_tracks, __global int* const dev_event_offsets,
-  __global int* const dev_hit_offsets, __global float* const dev_best_fits,
-  __global int* const dev_hit_candidates, __global int* const dev_hit_h2_candidates) {
+__kernel void clTrackForwarding(
+  __global struct CL_Track* const dev_tracks_per_sensor,
+  __global const char* const dev_input,
+  __global int* const dev_atomicsStorage,
+  __global struct CL_Track* const dev_tracklets,
+  __global int* const dev_weak_tracks,
+  __global int* const dev_best_fits,
+  __global int* const best_fits_hit_index) {
   
   // Data initialization
   // Each event is treated with two blocks, one for each side.
   const int sensor_id = get_group_id(0);
   const int sensors_under_process = get_num_groups(0);
-  const int blockDim_product = get_local_size(0) * get_local_size(1);
 
   // Pointers to data within the event
   __global const int* const no_sensors = (__global const int*) dev_input;
@@ -203,15 +50,10 @@ __kernel void clTrackForwarding(__global struct CL_Track* const dev_tracks_per_s
 
   // Per side datatypes
   const int hit_offset = sensor_id * MAX_TRACKS_PER_SENSOR;
-  __global bool* const hit_used = dev_hit_used;
-  __global int* const hit_candidates = dev_hit_candidates;
-  __global int* const hit_h2_candidates = dev_hit_h2_candidates;
 
-  __global int* const tracks_to_follow = dev_tracks_to_follow + sensor_id * TTF_MODULO;
   __global struct CL_Track* const tracklets = dev_tracklets + hit_offset;
-  __global float* const best_fits = dev_best_fits + sensor_id * number_of_sensors * get_local_size(0);
+  __global int* const best_fits = dev_best_fits + sensor_id * number_of_sensors * number_of_hits;
 
-  __global unsigned int* const tracks_insertPointer = (__global unsigned int*) dev_atomicsStorage;
   __global unsigned int* const weaktracks_insertPointer = (__global unsigned int*) dev_atomicsStorage + 1;
   __global int* const weak_tracks = dev_weak_tracks;
   __global struct CL_Track* const tracks_per_sensor = dev_tracks_per_sensor + sensor_id * MAX_TRACKS_PER_SENSOR;
@@ -219,76 +61,184 @@ __kernel void clTrackForwarding(__global struct CL_Track* const dev_tracks_per_s
   // Initialize variables according to event number and sensor side
   // Insert pointers (atomics)
   int shift = 2;
-  __global int* const ttf_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const tracklets_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const max_numhits_to_process = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const tracks_per_sensor_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id;
 
   // The fun begins
-  __local int sensor_data [6];
+  struct Track t;
+  struct Hit h0, h1;
+  float tx, ty, best_fit;
+  bool best_fit_found;
+  int skipped_modules, first_hit_index, best_hit_h2;
 
-  // Let's do the CL_Track Forwarding sequentially now
-  unsigned int prev_ttf, last_ttf = 0, diff_ttf = 1;
-  int first_sensor = 50 - sensor_id;
+  // Forward all tracklets of the assigned sensor sensor_id
+  const int number_of_tracklets = tracklets_insertPointer[0];
+  for (int trackletID=0; trackletID<(number_of_tracklets + get_local_size(0) - 1) / get_local_size(0); ++trackletID) {
+    const int trackno = trackletID * get_local_size(0) + get_local_id(0);
+    const bool tracklet_inside_bounds = trackno < number_of_tracklets;
 
-  while (first_sensor >= 4 && diff_ttf > 0) {
+    if (tracklet_inside_bounds) {
+      // Load track
+      t = tracklets[trackno];
+      skipped_modules = 0;
 
-    // Update sensor data
-    if (get_local_id(0) < 6 && get_local_id(1) == 0) {
-      const int sensor_number = first_sensor - (get_local_id(0) % 3) * 2;
-      __global const int* const sensor_pointer = get_local_id(0) < 3 ? sensor_hitStarts : sensor_hitNums;
-      sensor_data[get_local_id(0)] = sensor_pointer[sensor_number];
+      // Initialize h0 and h1 with h1 and h2 respectively
+      const int t_hitsNum = t.hitsNum;
+      first_hit_index = t.hits[0];
+      const int h1_index = t.hits[t_hitsNum - 2];
+      const int h2_index = t.hits[t_hitsNum - 1];
+
+      h0.x = hit_Xs[h1_index];
+      h0.y = hit_Ys[h1_index];
+      h0.z = hit_Zs[h1_index];
+
+      h1.x = hit_Xs[h2_index];
+      h1.y = hit_Ys[h2_index];
+      h1.z = hit_Zs[h2_index];
+
+      // Track forwarding over t, for all hits in the next module
+      // Preload line calculations
+      const float td = 1.0f / (h1.z - h0.z);
+      const float txn = (h1.x - h0.x);
+      const float tyn = (h1.y - h0.y);
+      tx = txn * td;
+      ty = tyn * td;
     }
 
-    prev_ttf = last_ttf;
-    last_ttf = ttf_insertPointer[0];
-    diff_ttf = last_ttf - prev_ttf;
+    // Iterate over all sensors, and forward tracks
+    for (int lookup_sensor = 51 - sensor_id - 5; lookup_sensor >= 0; --lookup_sensor) {
+      // Initialize fit machinery
+      best_fit_found = false;
+      best_fit = MAX_FLOAT;
 
-    barrier(CLK_GLOBAL_MEM_FENCE | CLK_LOCAL_MEM_FENCE);
+      if (tracklet_inside_bounds && skipped_modules <= MAX_SKIPPED_MODULES + 1) {
+        // Find best h2 candidate with get_local_size(1) threads
+        const int sensor_hitnums = sensor_hitNums[lookup_sensor];
+        for (int i=0; i<(sensor_hitnums + get_local_size(1) - 1) / get_local_size(1); ++i) {
+          const int h2_element = i * get_local_size(1) + get_local_id(1);
+          const bool h2_inside_bounds = h2_element < sensor_hitnums;
 
-    // 2a. CL_Track forwarding
-    trackForwarding(
-      hit_Xs,
-      hit_Ys,
-      hit_Zs,
-      hit_used,
-      tracks_per_sensor_insertPointer,
-      ttf_insertPointer,
-      weaktracks_insertPointer,
-      (__local int*) &sensor_data[0],
-      diff_ttf,
-      blockDim_product,
-      tracks_to_follow,
-      weak_tracks,
-      prev_ttf,
-      tracklets,
-      tracks_per_sensor,
-      sensor_id,
-      best_fits + get_local_size(0)*first_sensor);
+          if (h2_inside_bounds) {
+            // Load h2
+            const int h2_index = sensor_hitStarts[lookup_sensor] + h2_element;
 
-    barrier(CLK_GLOBAL_MEM_FENCE | CLK_LOCAL_MEM_FENCE);
+            struct CL_Hit h2;
+            h2.x = hit_Xs[h2_index];
+            h2.y = hit_Ys[h2_index];
+            h2.z = hit_Zs[h2_index];
 
-    first_sensor--;
-  }
+            // Best fit machinery
+            const float fit = fitHitToTrack(tx, ty, &h0, h1.z, &h2);
+            const bool fit_is_better = fit < best_fit;
+            best_fit_found |= fit_is_better;
 
-  // Process the last bunch of track_to_follows
-  prev_ttf = last_ttf;
-  last_ttf = ttf_insertPointer[0];
-  diff_ttf = last_ttf - prev_ttf;
+            best_fit = fit_is_better * fit + !fit_is_better * best_fit;
+            best_hit_h2 = fit_is_better * h2_index + !fit_is_better * best_hit_h2;
+          }
+        }
+      }
 
-  for (int i=0; i<(diff_ttf + blockDim_product - 1) / blockDim_product; ++i) {
-    const unsigned int ttf_element = blockDim_product * i + get_local_id(1) * get_local_size(0) + get_local_id(0);
+      // Compare / Mix the results from the get_local_size(1) threads
+      const int val_best_fit = *((int*) &best_fit);
+      const int old_best_fit = best_fit_found ? atomic_min(best_fits + lookup_sensor * number_of_hits + first_hit_index, val_best_fit) : 0;
+      barrier(CLK_GLOBAL_MEM_FENCE);
+      const int new_best_fit = best_fit_found ? best_fits[lookup_sensor * number_of_hits + first_hit_index] : val_best_fit;
 
-    if (ttf_element < diff_ttf) {
-      const int fulltrackno = tracks_to_follow[prev_ttf + ttf_element];
-      const bool track_flag = (fulltrackno & 0x80000000) == 0x80000000;
-      const int trackno = fulltrackno & 0x0FFFFFFF;
+      const bool accept_forward = best_fit_found &&
+        (old_best_fit != val_best_fit) && (new_best_fit == val_best_fit);
 
-      // Here we are only interested in three-hit tracks,
-      // to mark them as "doubtful"
-      if (track_flag) {
-        const unsigned int weakP = atomic_add(weaktracks_insertPointer, 1);
-        weak_tracks[weakP] = (sensor_id << 24) | trackno;
+      // Communicate to other threads in case the current thread is the best
+      if (accept_forward) {
+        best_fits_hit_index[lookup_sensor * number_of_hits + first_hit_index] = best_hit_h2;
+      }
+
+      barrier(CLK_GLOBAL_MEM_FENCE);
+
+      if (tracklet_inside_bounds < MAX_SKIPPED_MODULES + 1) {
+        // If we have a best fit, update t
+        if (accept_forward) {
+          // Update the tracks to follow, we'll have to follow up
+          // this track on the next iteration
+          t.hits[t.hitsNum++] = best_hit_h2;
+        }
+
+        // Update the skipped modules
+        if (*((float*)&new_best_fit) == MAX_FLOAT) {
+          if (skipped_modules > MAX_SKIPPED_MODULES) {
+            // Increment skipped_modules to distinguish
+            // forming track that just skipped MAX_SKIPPED_MODULES from
+            // forming track that skipped MAX_SKIPPED_MODULES some iterations before
+            skipped_modules++;
+
+            // Cease search for this track, and add it
+            // accordingly either to weak_tracks or to tracks
+
+            if (get_local_id(1) == 0) {
+              // This is a one-man job...
+              if (t.hitsNum == 3) {
+                const unsigned int weakP = atomic_add(weaktracks_insertPointer, 1);
+
+                // Keep the info of which sensor_id treated this track for later
+                weak_tracks[weakP] = (sensor_id << 24) | trackno;
+              }
+              else {
+                const unsigned int trackP = atomic_add(tracks_per_sensor_insertPointer, 1);
+                tracks_per_sensor[trackP] = t;
+              }
+            }
+          }
+          else {
+            skipped_modules++;
+
+            // Corner case: We just looked up the last sensor
+            // Add track accordingly either to weak_tracks or to tracks
+            if (lookup_sensor == 0 && get_local_id(0)) {
+              if (t.hitsNum == 3) {
+                const unsigned int weakP = atomic_add(weaktracks_insertPointer, 1);
+                weak_tracks[weakP] = (sensor_id << 24) | trackno;
+              }
+              else {
+                const unsigned int trackP = atomic_add(tracks_per_sensor_insertPointer, 1);
+                tracks_per_sensor[trackP] = t;
+              }
+            }
+          }
+        }
+        else {
+          // Corner case: We just looked up the last sensor
+          // Add track accordingly either to weak_tracks or to tracks
+          if (lookup_sensor == 0 && get_local_id(0)) {
+            if (t.hitsNum == 3) {
+              const unsigned int weakP = atomic_add(weaktracks_insertPointer, 1);
+              weak_tracks[weakP] = (sensor_id << 24) | trackno;
+            }
+            else {
+              const unsigned int trackP = atomic_add(tracks_per_sensor_insertPointer, 1);
+              tracks_per_sensor[trackP] = t;
+            }
+          }
+          else if (lookup_sensor != 0) {
+            skipped_modules = 0;
+
+            // Reassign h0
+            h0 = h1;
+
+            // Reload the found h2 as the new h1
+            const int h2_index = best_fits_hit_index[lookup_sensor * number_of_hits + first_hit_index];
+            h1.x = hit_Xs[h2_index];
+            h1.y = hit_Ys[h2_index];
+            h1.z = hit_Zs[h2_index];
+
+            // Track forwarding over t, for all hits in the next module
+            // Preload line calculations
+            const float td = 1.0f / (h1.z - h0.z);
+            const float txn = (h1.x - h0.x);
+            const float tyn = (h1.y - h0.y);
+            tx = txn * td;
+            ty = tyn * td;
+          }
+        }
       }
     }
   }

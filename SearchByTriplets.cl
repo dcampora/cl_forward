@@ -9,7 +9,6 @@ void trackCreation(
   __global int* const hit_h2_candidates,
   __global int* const best_fits,
   __global int* const tracklets_insertPointer,
-  __global int* const ttf_insertPointer,
   __global struct CL_Track* const tracklets,
   __global int* const tracks_to_follow,
   const int h0_index,
@@ -108,9 +107,9 @@ void trackCreation(
 
   // Compare / Mix the results from the get_local_size(1) threads
   const int val_best_fit = *((int*) &best_fit);
-  const int old_best_fit = atomic_min(best_fits + get_local_id(0), val_best_fit);
+  const int old_best_fit = atomic_min(best_fits + h0_index, val_best_fit);
   barrier(CLK_GLOBAL_MEM_FENCE);
-  const int new_best_fit = best_fits[get_local_id(0)];
+  const int new_best_fit = best_fits[h0_index];
 
   const bool accept_track = (h0_index != -1) && best_fit_found &&
     (old_best_fit != val_best_fit) && (new_best_fit == val_best_fit);
@@ -127,12 +126,6 @@ void trackCreation(
     t_hits[0] = h0_index;
     t_hits[1] = best_hit_h1;
     t_hits[2] = best_hit_h2;
-
-    // Add the tracks to the bag of tracks to_follow
-    // Note: The first bit flag marks this is a tracklet (hitsNum == 3),
-    // and hence it is stored in tracklets
-    const unsigned int ttfP = atomic_add(ttf_insertPointer, 1) % TTF_MODULO;
-    tracks_to_follow[ttfP] = 0x80000000 | trackP;
   }
 }
 
@@ -180,7 +173,7 @@ __kernel void clSearchByTriplets(__global struct CL_Track* const dev_tracks, __g
 
   __global int* const tracks_to_follow = dev_tracks_to_follow + sensor_id * TTF_MODULO;
   __global struct CL_Track* const tracklets = dev_tracklets + hit_offset;
-  __global int* const best_fits = dev_best_fits + sensor_id * get_local_size(0);
+  __global int* const best_fits = dev_best_fits;
 
   __global unsigned int* const tracks_insertPointer = (__global unsigned int*) dev_atomicsStorage;
   __global unsigned int* const weaktracks_insertPointer = (__global unsigned int*) dev_atomicsStorage + 1;
@@ -190,7 +183,6 @@ __kernel void clSearchByTriplets(__global struct CL_Track* const dev_tracks, __g
   // Initialize variables according to event number and sensor side
   // Insert pointers (atomics)
   int shift = 2;
-  __global int* const ttf_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const tracklets_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const max_numhits_to_process = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const tracks_per_sensor_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id;
@@ -212,8 +204,9 @@ __kernel void clSearchByTriplets(__global struct CL_Track* const dev_tracks, __g
     max_numhits_to_process[0] = 0;
   }
 
-  // Seeding - CL_Track creation
+  barrier(CLK_GLOBAL_MEM_FENCE | CLK_LOCAL_MEM_FENCE);
 
+  // Seeding - CL_Track creation
   // Iterate in all hits for current sensor
   for (int i=0; i<(sensor_hitNums[first_sensor] + get_local_size(0) - 1) / get_local_size(0); ++i) {
     
@@ -221,12 +214,6 @@ __kernel void clSearchByTriplets(__global struct CL_Track* const dev_tracks, __g
     const int element = get_local_size(0) * i + get_local_id(0);
     const int h0_index = sensor_hitStarts[first_sensor] + element;
     const bool inside_bounds = element < sensor_hitNums[first_sensor];
-
-    if (get_local_id(1) == 0) {
-      best_fits[get_local_id(0)] = 0x7FFFFFFF;
-    }
-
-    barrier(CLK_GLOBAL_MEM_FENCE | CLK_LOCAL_MEM_FENCE);
 
     trackCreation(
       hit_Xs,
@@ -238,12 +225,9 @@ __kernel void clSearchByTriplets(__global struct CL_Track* const dev_tracks, __g
       hit_h2_candidates,
       best_fits,
       tracklets_insertPointer,
-      ttf_insertPointer,
       tracklets,
       tracks_to_follow,
       h0_index,
       inside_bounds);
-
-    barrier(CLK_GLOBAL_MEM_FENCE | CLK_LOCAL_MEM_FENCE);
   }
 }
