@@ -1,7 +1,7 @@
 
-__kernel void clFillCandidates(__global struct Track* const dev_tracks, __global const char* const dev_input,
+__kernel void clFillCandidates(__global struct CL_Track* const dev_tracks, __global const char* const dev_input,
   __global int* const dev_tracks_to_follow, __global bool* const dev_hit_used,
-  __global int* const dev_atomicsStorage, __global struct Track* const dev_tracklets,
+  __global int* const dev_atomicsStorage, __global struct CL_Track* const dev_tracklets,
   __global int* const dev_weak_tracks, __global int* const dev_event_offsets,
   __global int* const dev_hit_offsets, __global float* const dev_best_fits,
   __global int* const dev_hit_candidates, __global int* const dev_hit_h2_candidates) {
@@ -44,7 +44,7 @@ __kernel void clFillCandidates(__global struct Track* const dev_tracks, __global
       bool first_h2_found = false, last_h2_found = false;
       const int h0_index = sensor_hitStarts[first_sensor] + h0_element;
       int h1_index;
-      struct Hit h0;
+      struct CL_Hit h0;
       h0.x = hit_Xs[h0_index];
       h0.z = hit_Zs[h0_index];
       const int hitstarts_s2 = sensor_hitStarts[second_sensor];
@@ -77,7 +77,7 @@ __kernel void clFillCandidates(__global struct Track* const dev_tracks, __global
 
           if (inside_bounds) {
             h1_index = hitstarts_s2 + h1_element;
-            struct Hit h1;
+            struct CL_Hit h1;
             h1.x = hit_Xs[h1_index];
             h1.z = hit_Zs[h1_index];
 

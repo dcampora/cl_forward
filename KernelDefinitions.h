@@ -1,24 +1,23 @@
+#ifndef OPENCL_OPTIONS
+#define OPENCL_OPTIONS 1
 
-// Used to prefer a device type over another one
+#define DEVICE_NUMBER 0
 #define DEVICE_CPU 0
 #define DEVICE_GPU 1
 #define DEVICE_ACCELERATOR 2
-#define DEVICE_PREFERENCE DEVICE_GPU
-#define DEVICE_NUMBER 0
+#define DEVICE_PREFERENCE DEVICE_CPU
 
-#define NUMTHREADS_X 64
-#define MAX_NUMTHREADS_Y 64
-#define TF_NUMTHREADS_X 64
-#define TF_NUMTHREADS_Y 4
+#define NUMTHREADS_X 8
+#define TF_NUMTHREADS_X 8
+#define TF_NUMTHREADS_Y 1
 #define NUM_ATOMICS 5
 #define USE_SHARED_FOR_HITS false
 #define SH_HIT_MULT 2
 
-#define MAX_TRACKS 4000
+#define MAX_TRACKS 6000
 #define MAX_TRACK_SIZE 24
-#define MAX_TRACKS_PER_SENSOR 200
+#define MAX_TRACKS_PER_SENSOR 300
 
-#define REQUIRED_UNIQUES 0.6f
 #define MIN_HITS_TRACK 3
 #define MAX_FLOAT FLT_MAX
 #define MIN_FLOAT -FLT_MAX
@@ -36,23 +35,50 @@
 
 #define MAX_SCATTER 0.000016f
 #define SENSOR_DATA_HITNUMS 3
-#define RESULTS_FOLDER "results"
 
 #define PRINT_SOLUTION true
 #define PRINT_VERBOSE true
+#define RESULTS_FOLDER "results"
 
 struct Sensor {
-    unsigned int hitStart;
-    unsigned int hitNums;
+  unsigned int hitStart;
+  unsigned int hitNums;
 };
 
 struct Hit {
-    float x;
-    float y;
-    float z;
+  float x;
+  float y;
+  float z;
 };
 
-struct Track { // 4 + 24 * 4 = 100 B
-    unsigned int hitsNum;
-    unsigned int hits[MAX_TRACK_SIZE];
+struct Track {
+  unsigned int hitsNum;
+  unsigned int hits[MAX_TRACK_SIZE];
 };
+
+struct Covariance {
+  float c00, c20, c22, c11, c31, c33;
+};
+
+struct TrackParameters {
+  float x0, y0, tx, ty;
+  struct Covariance cov;
+  float zbeam;
+  float chi2;
+  bool backward;
+};
+
+struct FitKalmanTrackParameters {
+  float x, y, z, tx, ty;
+  struct Covariance cov;
+  float chi2;
+};
+
+#define CL_Sensor Sensor
+#define CL_Hit Hit
+#define CL_Track Track
+#define CL_Covariance Covariance
+#define CL_TrackParameters TrackParameters
+#define CL_FitKalmanTrackParameters FitKalmanTrackParameters
+
+#endif

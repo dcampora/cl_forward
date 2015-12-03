@@ -30,8 +30,8 @@ int invokeParallelSearch(
   cl_uint fillCandidates_work_dim = 2;
 
   int searchByTriplets_blocks = (number_of_sensors - 4);
-  size_t searchByTriplets_global_work_size[2] = { (size_t) NUMTHREADS_X * searchByTriplets_blocks, 4 };
-  size_t searchByTriplets_local_work_size[2] = { (size_t) NUMTHREADS_X, 4 };
+  size_t searchByTriplets_global_work_size[2] = { (size_t) NUMTHREADS_X * searchByTriplets_blocks, 1 };
+  size_t searchByTriplets_local_work_size[2] = { (size_t) NUMTHREADS_X, 1 };
   cl_uint searchByTriplets_work_dim = 2;
 
   size_t trackForwarding_global_work_size[2] = { (size_t) TF_NUMTHREADS_X * (number_of_sensors - 5), TF_NUMTHREADS_Y };
@@ -55,7 +55,7 @@ int invokeParallelSearch(
 
   // Step 5: Create program object
   std::vector<std::string> source_files =
-    {"KernelDefinitions.h", "TrackForwarding.cl", "SearchByTriplets.cl", "FillCandidates.cl", "CloneKiller.cl"};
+    {"KernelDefinitions.h", "FillCandidates.cl", "SearchByTriplets.cl", "TrackForwarding.cl", "CloneKiller.cl"};
   std::string source_str = "";
   for (auto s : source_files) {
     std::string temp_str;
@@ -67,10 +67,10 @@ int invokeParallelSearch(
   cl_program program = clCreateProgramWithSource(context, 1, &source, sourceSize, NULL);
   
   // Step 6: Build program
-  const char* buildOptions = "";
+  // const char* buildOptions = "";
   // const char* buildOptions = "-cl-nv-maxrregcount=32";
   // const char* buildOptions = "-g -s /home/dcampora/nfs/projects/gpu/tf_opencl/KernelDefinitions.cl -s /home/dcampora/nfs/projects/gpu/tf_opencl/kernel_searchByTriplets.cl"; 
-  // const char* buildOptions = "-g -s \"/home/dcampora/projects/gpu/cl_forward_one_event/cl/TrackForwarding.cl\"";
+  const char* buildOptions = "-g -s \"/home/dcampora/projects/gpu/cl_forward_one_event/cl/all.cl\"";
   cl_int status = clBuildProgram(program, 1, devices, buildOptions, NULL, NULL);
 
   if (status != CL_SUCCESS) {
@@ -197,8 +197,8 @@ int invokeParallelSearch(
   
   // Adding timing
   // Timing calculation
-  unsigned int niterations = 4;
-  unsigned int nexperiments = 4;
+  unsigned int niterations = 1;
+  unsigned int nexperiments = 1;
 
   std::vector<std::vector<float>> times_fillCandidates {nexperiments};
   std::vector<std::vector<float>> times_searchByTriplets {nexperiments};
@@ -235,8 +235,8 @@ int invokeParallelSearch(
       clInitializeValue<cl_int>(commandQueue, dev_atomicsStorage, number_of_sensors * atomic_space, 0);
       clInitializeValue<cl_int>(commandQueue, dev_hit_candidates, 2 * acc_hits, -1);
       clInitializeValue<cl_int>(commandQueue, dev_hit_h2_candidates, 2 * acc_hits, -1);
-      clInitializeValue<cl_int>(commandQueue, dev_best_fits, number_of_sensors * NUMTHREADS_X, 0x7FFFFFFF);
-      clInitializeValue<cl_int>(commandQueue, dev_best_fits_forwarding, number_of_sensors * number_of_sensors * TF_NUMTHREADS_X, 0x7FFFFFFF);
+      // clInitializeValue<cl_int>(commandQueue, dev_best_fits, number_of_sensors * NUMTHREADS_X, 0x7FFFFFFF);
+      // clInitializeValue<cl_int>(commandQueue, dev_best_fits_forwarding, number_of_sensors * number_of_sensors * TF_NUMTHREADS_X, 0x7FFFFFFF);
 
       // Just for debugging
       clInitializeValue<cl_char>(commandQueue, dev_tracks, MAX_TRACKS * sizeof(Track), 0);
@@ -247,8 +247,11 @@ int invokeParallelSearch(
       cl_event event_searchByTriplets, event_fillCandidates, event_trackForwarding, event_cloneKiller;
 
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_fillCandidates, fillCandidates_work_dim, NULL, fillCandidates_global_work_size, fillCandidates_local_work_size, 0, NULL, &event_fillCandidates));
+      clCheck(clFinish(commandQueue));
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_searchByTriplets, searchByTriplets_work_dim, NULL, searchByTriplets_global_work_size, searchByTriplets_local_work_size, 0, NULL, &event_searchByTriplets));
+      clCheck(clFinish(commandQueue));
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_trackForwarding, trackForwarding_work_dim, NULL, trackForwarding_global_work_size, trackForwarding_local_work_size, 0, NULL, &event_trackForwarding));
+      clCheck(clFinish(commandQueue));
       clCheck(clEnqueueNDRangeKernel(commandQueue, kernel_cloneKiller, cloneKiller_work_dim, NULL, cloneKiller_global_work_size, cloneKiller_local_work_size, 0, NULL, &event_cloneKiller));
       clCheck(clFinish(commandQueue));
   

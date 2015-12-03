@@ -1,11 +1,11 @@
 
-__kernel void clCloneKiller(__global struct Track* const dev_tracks, __global const char* const dev_input,
+__kernel void clCloneKiller(__global struct CL_Track* const dev_tracks, __global const char* const dev_input,
   __global int* const dev_tracks_to_follow, __global bool* const dev_hit_used,
-  __global int* const dev_atomicsStorage, __global struct Track* const dev_tracklets,
+  __global int* const dev_atomicsStorage, __global struct CL_Track* const dev_tracklets,
   __global int* const dev_weak_tracks, __global int* const dev_event_offsets,
   __global int* const dev_hit_offsets, __global float* const dev_best_fits,
   __global int* const dev_hit_candidates, __global int* const dev_hit_h2_candidates,
-  __global struct Track* const dev_tracks_per_sensor) {
+  __global struct CL_Track* const dev_tracks_per_sensor) {
   
   // Data initialization
   // Each event is treated with two blocks, one for each side.
@@ -32,22 +32,21 @@ __kernel void clCloneKiller(__global struct Track* const dev_tracks, __global co
   __global int* const hit_h2_candidates = dev_hit_h2_candidates;
 
   __global int* const tracks_to_follow = dev_tracks_to_follow + sensor_id * TTF_MODULO;
-  __global struct Track* const tracklets = dev_tracklets;
+  __global struct CL_Track* const tracklets = dev_tracklets;
   __global float* const best_fits = dev_best_fits + sensor_id * blockDim_product;
 
   __global unsigned int* const tracks_insertPointer = (__global unsigned int*) dev_atomicsStorage;
   __global unsigned int* const weaktracks_insertPointer = (__global unsigned int*) dev_atomicsStorage + 1;
   __global int* const weak_tracks = dev_weak_tracks;
 
-  __global struct Track* const tracks_per_sensor = dev_tracks_per_sensor;
-  __global struct Track* const tracks = dev_tracks;
+  __global struct CL_Track* const tracks_per_sensor = dev_tracks_per_sensor;
+  __global struct CL_Track* const tracks = dev_tracks;
 
   // Initialize variables according to event number and sensor side
   // Insert pointers (atomics)
   int shift = 2;
   __global int* const ttf_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const tracklets_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
-  __global int* const sh_hit_lastPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const max_numhits_to_process = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const tracks_per_sensor_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id;
 
@@ -66,7 +65,7 @@ __kernel void clCloneKiller(__global struct Track* const dev_tracks, __global co
     const int number_of_tracks = tracks_per_sensor_insertPointer[i];
     for (int j=0; j<(number_of_tracks + blockDim_product - 1) / blockDim_product; ++j) {
       const unsigned int trackno = blockDim_product * j + get_local_id(1) * get_local_size(0) + get_local_id(0);
-      struct Track t;
+      struct CL_Track t;
       bool used = true;
 
       if (trackno < number_of_tracks) {
@@ -100,7 +99,7 @@ __kernel void clCloneKiller(__global struct Track* const dev_tracks, __global co
       const int fulltrackno = weak_tracks[weaktrack_no];
       const int sensor_id_wt = fulltrackno >> 24;
       const int trackletno = fulltrackno & 0x00FFFFFF;
-      const struct Track t = (tracklets + sensor_id_wt*MAX_TRACKS_PER_SENSOR)[trackletno];
+      const struct CL_Track t = (tracklets + sensor_id_wt*MAX_TRACKS_PER_SENSOR)[trackletno];
 
       // Store them in the tracks bag iff they
       // are made out of three unused hits

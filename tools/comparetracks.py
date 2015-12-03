@@ -47,7 +47,7 @@ def compareTrack(trackA, tracks):
     if trackB == None:
         print "Track ID", trackA['hits'][0]['hitid'], "has no corresponding track"
         for hitinfo in trackA['hits']:
-            print " -", hitinfo['hitid'], "module", hitinfo['module'], "x", hitinfo['x'], "y", hitinfo['y'], "z", hitinfo['z']
+            print " -", hitinfo['hitid'], "(", hitinfo['hitrelid'], ") module", hitinfo['module'], "x", hitinfo['x'], "y", hitinfo['y'], "z", hitinfo['z']
         return False
     elif trackA['nhits'] != trackB['nhits']:
         print "Tracks with ID", trackA['hits'][0]['hitid'], "differ:"
@@ -60,17 +60,17 @@ def compareTrack(trackA, tracks):
         equal = [a for a in hitIDsA if a in hitIDsB]
         for hitid in equal:
             hitinfo = [a for a in trackA['hits'] if a['hitid']==hitid][0]
-            print "  ", hitinfo['hitid'], "module", hitinfo['module'], "x", hitinfo['x'], "y", hitinfo['y'], "z", hitinfo['z']
+            print "  ", hitinfo['hitid'], "(", hitinfo['hitrelid'], ") module", hitinfo['module'], "x", hitinfo['x'], "y", hitinfo['y'], "z", hitinfo['z']
         # Get the list of hits missing in trackB, prefix "-"
         bmissing = [a for a in hitIDsA if a not in hitIDsB]
         for hitid in bmissing:
             hitinfo = [a for a in trackA['hits'] if a['hitid']==hitid][0]
-            print " -", hitinfo['hitid'], "module", hitinfo['module'], "x", hitinfo['x'], "y", hitinfo['y'], "z", hitinfo['z']
+            print " -", hitinfo['hitid'], "(", hitinfo['hitrelid'], ") module", hitinfo['module'], "x", hitinfo['x'], "y", hitinfo['y'], "z", hitinfo['z']
         # Get the list of hits missing in trackA, prefix "+"
         amissing = [a for a in hitIDsB if a not in hitIDsA]
         for hitid in amissing:
             hitinfo = [a for a in trackB['hits'] if a['hitid']==hitid][0]
-            print " +", hitinfo['hitid'], "module", hitinfo['module'], "x", hitinfo['x'], "y", hitinfo['y'], "z", hitinfo['z']
+            print " +", hitinfo['hitid'], "(", hitinfo['hitrelid'], ") module", hitinfo['module'], "x", hitinfo['x'], "y", hitinfo['y'], "z", hitinfo['z']
         return False
     else:
         print "Track ID", trackA['hits'][0]['hitid'], "are equal! :)"
@@ -114,8 +114,9 @@ def read_gpupixel_file(filename):
 
     for i in re.finditer("Track #(?P<ntrack>\d+), length (?P<nhits>\d+)\n(?P<hits>.*?)\n\n", s, re.DOTALL):
         hits = []
-        for j in re.finditer(" (?P<hitid>\d+) (\(\d+\) )?module *(?P<module>\d+), x *(?P<x>[\d\.\-]+), y *(?P<y>[\d\.\-]+), z *(?P<z>[\d\.\-]+)", i.group(0), re.DOTALL):
+        for j in re.finditer(" (?P<hitid>\d+) (\((?P<hitrelid>\d+)\) )?module *(?P<module>\d+), x *(?P<x>[\d\.\-]+), y *(?P<y>[\d\.\-]+), z *(?P<z>[\d\.\-]+)", i.group(0), re.DOTALL):
             hits.append({'hitid': j.group('hitid'),
+                'hitrelid': j.group('hitrelid'),
                 'module': j.group('module'),
                 'x': j.group('x'),
                 'y': j.group('y'),

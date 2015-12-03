@@ -1,5 +1,5 @@
 
-float fitHitToTrack(const float tx, const float ty, const struct Hit* h0, const float h1_z, const struct Hit* h2) {
+float fitHitToTrack(const float tx, const float ty, const struct CL_Hit* h0, const float h1_z, const struct CL_Hit* h2) {
   // tolerances
   const float dz = h2->z - h0->z;
   const float x_prediction = h0->x + tx * dz;
@@ -29,26 +29,32 @@ void trackForwarding(
   volatile __global int* const tracks_insertPointer,
   volatile __global int* const ttf_insertPointer,
   __global int* const weaktracks_insertPointer,
-  const int blockDim_sh_hit,
   __local int* const sensor_data,
   const unsigned int diff_ttf,
   const int blockDim_product,
   __global int* const tracks_to_follow,
   __global int* const weak_tracks,
   const unsigned int prev_ttf,
-  __global struct Track* const tracklets,
-  __global struct Track* const tracks,
+  __global struct CL_Track* const tracklets,
+  __global struct CL_Track* const tracks,
   const int sensor_id,
   __global int* const best_fits) {
 
   for (int i=0; i<(diff_ttf + get_local_size(0) - 1) / get_local_size(0); ++i) {
+
+    barrier(CLK_GLOBAL_MEM_FENCE);
+    if (get_local_id(1) == 0) {
+      best_fits[get_local_id(0)] = 0x7FFFFFFF;
+    }
+    barrier(CLK_GLOBAL_MEM_FENCE);
+
     const unsigned int ttf_element = get_local_size(0) * i + get_local_id(0);
 
     // These variables need to go here, shared memory and scope requirements
     float tx, ty, h1_z;
     unsigned int trackno, fulltrackno, skipped_modules, best_hit_h2;
-    struct Track t;
-    struct Hit h0;
+    struct CL_Track t;
+    struct CL_Hit h0;
 
     // The logic is broken in two parts for shared memory loading
     const bool ttf_condition = ttf_element < diff_ttf;
@@ -58,7 +64,7 @@ void trackForwarding(
       skipped_modules = (fulltrackno & 0x70000000) >> 28;
       trackno = fulltrackno & 0x0FFFFFFF;
 
-      __global const struct Track* const track_pointer = track_flag ? tracklets : tracks;
+      __global const struct CL_Track* const track_pointer = track_flag ? tracklets : tracks;
 
       t = track_pointer[trackno];
 
@@ -75,7 +81,7 @@ void trackForwarding(
       const float h1_y = hit_Ys[h1_num];
       h1_z = hit_Zs[h1_num];
 
-      // Track forwarding over t, for all hits in the next module
+      // CL_Track forwarding over t, for all hits in the next module
       // Line calculations
       const float td = 1.0f / (h1_z - h0.z);
       const float txn = (h1_x - h0.x);
@@ -96,7 +102,7 @@ void trackForwarding(
         if (h2_element < sensor_data[SENSOR_DATA_HITNUMS + 2]) {
           const int h2_index = sensor_data[2] + h2_element;
 
-          struct Hit h2;
+          struct CL_Hit h2;
           h2.x = hit_Xs[h2_index];
           h2.y = hit_Ys[h2_index];
           h2.z = hit_Zs[h2_index];
@@ -112,11 +118,11 @@ void trackForwarding(
     }
 
     // Compare / Mix the results from the get_local_size(1) threads
-    const int local_id = get_local_id(0);
     const int val_best_fit = *((int*) &best_fit);
     const int old_best_fit = atomic_min(best_fits + get_local_id(0), val_best_fit);
     barrier(CLK_GLOBAL_MEM_FENCE);
     const int new_best_fit = best_fits[get_local_id(0)];
+    barrier(CLK_GLOBAL_MEM_FENCE);
 
     const bool accept_forward = best_fit_found &&
       (old_best_fit != val_best_fit) && (new_best_fit == val_best_fit);
@@ -169,9 +175,9 @@ void trackForwarding(
   }
 }
 
-__kernel void clTrackForwarding(__global struct Track* const dev_tracks_per_sensor, __global const char* const dev_input,
+__kernel void clTrackForwarding(__global struct CL_Track* const dev_tracks_per_sensor, __global const char* const dev_input,
   __global int* const dev_tracks_to_follow, __global bool* const dev_hit_used,
-  __global int* const dev_atomicsStorage, __global struct Track* const dev_tracklets,
+  __global int* const dev_atomicsStorage, __global struct CL_Track* const dev_tracklets,
   __global int* const dev_weak_tracks, __global int* const dev_event_offsets,
   __global int* const dev_hit_offsets, __global float* const dev_best_fits,
   __global int* const dev_hit_candidates, __global int* const dev_hit_h2_candidates) {
@@ -202,30 +208,26 @@ __kernel void clTrackForwarding(__global struct Track* const dev_tracks_per_sens
   __global int* const hit_h2_candidates = dev_hit_h2_candidates;
 
   __global int* const tracks_to_follow = dev_tracks_to_follow + sensor_id * TTF_MODULO;
-  __global struct Track* const tracklets = dev_tracklets + hit_offset;
+  __global struct CL_Track* const tracklets = dev_tracklets + hit_offset;
   __global float* const best_fits = dev_best_fits + sensor_id * number_of_sensors * get_local_size(0);
 
   __global unsigned int* const tracks_insertPointer = (__global unsigned int*) dev_atomicsStorage;
   __global unsigned int* const weaktracks_insertPointer = (__global unsigned int*) dev_atomicsStorage + 1;
   __global int* const weak_tracks = dev_weak_tracks;
-  __global struct Track* const tracks_per_sensor = dev_tracks_per_sensor + sensor_id * MAX_TRACKS_PER_SENSOR;
+  __global struct CL_Track* const tracks_per_sensor = dev_tracks_per_sensor + sensor_id * MAX_TRACKS_PER_SENSOR;
 
   // Initialize variables according to event number and sensor side
   // Insert pointers (atomics)
   int shift = 2;
   __global int* const ttf_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const tracklets_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
-  __global int* const sh_hit_lastPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const max_numhits_to_process = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const tracks_per_sensor_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id;
 
   // The fun begins
   __local int sensor_data [6];
 
-  const int cond_sh_hit_mult = min((int) get_local_size(1), SH_HIT_MULT);
-  const int blockDim_sh_hit = NUMTHREADS_X * cond_sh_hit_mult;
-
-  // Let's do the Track Forwarding sequentially now
+  // Let's do the CL_Track Forwarding sequentially now
   unsigned int prev_ttf, last_ttf = 0, diff_ttf = 1;
   int first_sensor = 50 - sensor_id;
 
@@ -244,7 +246,7 @@ __kernel void clTrackForwarding(__global struct Track* const dev_tracks_per_sens
 
     barrier(CLK_GLOBAL_MEM_FENCE | CLK_LOCAL_MEM_FENCE);
 
-    // 2a. Track forwarding
+    // 2a. CL_Track forwarding
     trackForwarding(
       hit_Xs,
       hit_Ys,
@@ -253,7 +255,6 @@ __kernel void clTrackForwarding(__global struct Track* const dev_tracks_per_sens
       tracks_per_sensor_insertPointer,
       ttf_insertPointer,
       weaktracks_insertPointer,
-      blockDim_sh_hit,
       (__local int*) &sensor_data[0],
       diff_ttf,
       blockDim_product,
