@@ -84,10 +84,9 @@ __kernel void clTrackForwarding(
       skipped_modules = 0;
 
       // Initialize h0 and h1 with h1 and h2 respectively
-      const int t_hitsNum = t.hitsNum;
       first_hit_index = t.hits[0];
-      const int h1_index = t.hits[t_hitsNum - 2];
-      const int h2_index = t.hits[t_hitsNum - 1];
+      const int h1_index = t.hits[1];
+      const int h2_index = t.hits[2];
 
       h0.x = hit_Xs[h1_index];
       h0.y = hit_Ys[h1_index];
@@ -143,7 +142,7 @@ __kernel void clTrackForwarding(
       const int val_best_fit = *((int*) &best_fit);
       const int old_best_fit = best_fit_found ? atomic_min(best_fits + lookup_sensor * number_of_hits + first_hit_index, val_best_fit) : 0;
       barrier(CLK_GLOBAL_MEM_FENCE);
-      const int new_best_fit = best_fit_found ? best_fits[lookup_sensor * number_of_hits + first_hit_index] : val_best_fit;
+      const int new_best_fit = best_fit_found ? best_fits[lookup_sensor * number_of_hits + first_hit_index] : 0;
 
       const bool accept_forward = best_fit_found &&
         (old_best_fit != val_best_fit) && (new_best_fit == val_best_fit);
@@ -156,14 +155,8 @@ __kernel void clTrackForwarding(
       barrier(CLK_GLOBAL_MEM_FENCE);
 
       if (tracklet_inside_bounds < MAX_SKIPPED_MODULES + 1) {
-        // If we have a best fit, update t
-        if (accept_forward) {
-          // Update the tracks to follow, we'll have to follow up
-          // this track on the next iteration
-          t.hits[t.hitsNum++] = best_hit_h2;
-        }
 
-        // Update the skipped modules
+        // We didn't find a hit
         if (*((float*)&new_best_fit) == MAX_FLOAT) {
           if (skipped_modules > MAX_SKIPPED_MODULES) {
             // Increment skipped_modules to distinguish
@@ -205,7 +198,13 @@ __kernel void clTrackForwarding(
             }
           }
         }
+
         else {
+          // We found a new hit for our track
+          // Update the track
+          const int h2_index = best_fits_hit_index[lookup_sensor * number_of_hits + first_hit_index];
+          t.hits[t.hitsNum++] = h2_index;
+
           // Corner case: We just looked up the last sensor
           // Add track accordingly either to weak_tracks or to tracks
           if (lookup_sensor == 0 && get_local_id(0)) {
@@ -219,13 +218,13 @@ __kernel void clTrackForwarding(
             }
           }
           else if (lookup_sensor != 0) {
+            // Update skipped_modules
             skipped_modules = 0;
 
             // Reassign h0
             h0 = h1;
 
             // Reload the found h2 as the new h1
-            const int h2_index = best_fits_hit_index[lookup_sensor * number_of_hits + first_hit_index];
             h1.x = hit_Xs[h2_index];
             h1.y = hit_Ys[h2_index];
             h1.z = hit_Zs[h2_index];
