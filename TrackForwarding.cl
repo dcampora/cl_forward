@@ -155,8 +155,8 @@ __kernel void clTrackForwarding(
       barrier(CLK_GLOBAL_MEM_FENCE);
 
       if (tracklet_inside_bounds < MAX_SKIPPED_MODULES + 1) {
-
         // We didn't find a hit
+
         if (*((float*)&new_best_fit) == MAX_FLOAT) {
           if (skipped_modules > MAX_SKIPPED_MODULES) {
             // Increment skipped_modules to distinguish
@@ -206,16 +206,11 @@ __kernel void clTrackForwarding(
           t.hits[t.hitsNum++] = h2_index;
 
           // Corner case: We just looked up the last sensor
-          // Add track accordingly either to weak_tracks or to tracks
+          // Add track accordingly
+          // It must have at least 4 hits, since we found one
           if (lookup_sensor == 0 && get_local_id(0)) {
-            if (t.hitsNum == 3) {
-              const unsigned int weakP = atomic_add(weaktracks_insertPointer, 1);
-              weak_tracks[weakP] = (sensor_id << 24) | trackno;
-            }
-            else {
-              const unsigned int trackP = atomic_add(tracks_per_sensor_insertPointer, 1);
-              tracks_per_sensor[trackP] = t;
-            }
+            const unsigned int trackP = atomic_add(tracks_per_sensor_insertPointer, 1);
+            tracks_per_sensor[trackP] = t;
           }
           else if (lookup_sensor != 0) {
             // Update skipped_modules
