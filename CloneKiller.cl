@@ -26,37 +26,22 @@ __kernel void clCloneKiller(__global struct CL_Track* const dev_tracks, __global
   __global const float* const hit_Ys = (__global const float*) (hit_Xs + number_of_hits);
   __global const float* const hit_Zs = (__global const float*) (hit_Ys + number_of_hits);
 
-  // Per side datatypes
+  // Clone Killer specific pointers
   __global bool* const hit_used = dev_hit_used;
-  __global int* const hit_candidates = dev_hit_candidates;
-  __global int* const hit_h2_candidates = dev_hit_h2_candidates;
-
-  __global int* const tracks_to_follow = dev_tracks_to_follow + sensor_id * TTF_MODULO;
   __global struct CL_Track* const tracklets = dev_tracklets;
-  __global float* const best_fits = dev_best_fits + sensor_id * blockDim_product;
-
-  __global unsigned int* const tracks_insertPointer = (__global unsigned int*) dev_atomicsStorage;
-  __global unsigned int* const weaktracks_insertPointer = (__global unsigned int*) dev_atomicsStorage + 1;
   __global int* const weak_tracks = dev_weak_tracks;
-
   __global struct CL_Track* const tracks_per_sensor = dev_tracks_per_sensor;
   __global struct CL_Track* const tracks = dev_tracks;
 
-  // Initialize variables according to event number and sensor side
-  // Insert pointers (atomics)
+  // Atomics
+  __global unsigned int* const tracks_insertPointer = (__global unsigned int*) dev_atomicsStorage;
+  __global unsigned int* const weaktracks_insertPointer = (__global unsigned int*) dev_atomicsStorage + 1;
   int shift = 2;
-  __global int* const ttf_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const tracklets_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const max_numhits_to_process = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const tracks_per_sensor_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id;
 
   // The fun begins
-#if USE_SHARED_FOR_HITS
-  __local float sh_hit_x [NUMTHREADS_X * SH_HIT_MULT];
-  __local float sh_hit_y [NUMTHREADS_X * SH_HIT_MULT];
-  __local float sh_hit_z [NUMTHREADS_X * SH_HIT_MULT];
-#endif
-  __local int sensor_data [6];
 
   // Process all tracks
   for (int i=0; i<number_of_sensors-4; ++i) {

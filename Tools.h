@@ -57,15 +57,8 @@ const char *getErrorString (cl_int error);
 
 template <class T>
 void clInitializeValue(cl_command_queue& commandQueue, cl_mem& param, size_t size, T value) {
-    T* temp;
-    if (value == 0) temp = (T*) calloc(size, sizeof(T));
-    else {
-        temp = (T*) malloc(size * sizeof(T));
-        for (int i=0; i<size; ++i) temp[i] = value;
-    }
-
-    clCheck(clEnqueueWriteBuffer(commandQueue, param, CL_TRUE, 0, size * sizeof(T), temp, 0, NULL, NULL));
-    free(temp);
+    std::vector<T> temp (size, value);
+    clCheck(clEnqueueWriteBuffer(commandQueue, param, CL_TRUE, 0, size * sizeof(T), temp.data(), 0, NULL, NULL));
 }
 
 void clChoosePlatform(cl_device_id*& devices, cl_platform_id& platform);

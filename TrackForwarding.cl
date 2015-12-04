@@ -48,24 +48,22 @@ __kernel void clTrackForwarding(
   __global const float* const hit_Ys = (__global const float*) (hit_Xs + number_of_hits);
   __global const float* const hit_Zs = (__global const float*) (hit_Ys + number_of_hits);
 
-  // Per side datatypes
+  // Track Forward specific pointers
   const int hit_offset = sensor_id * MAX_TRACKS_PER_SENSOR;
-
   __global struct CL_Track* const tracklets = dev_tracklets + hit_offset;
   __global int* const best_fits = dev_best_fits + sensor_id * number_of_sensors * number_of_hits;
-
-  __global unsigned int* const weaktracks_insertPointer = (__global unsigned int*) dev_atomicsStorage + 1;
   __global int* const weak_tracks = dev_weak_tracks;
   __global struct CL_Track* const tracks_per_sensor = dev_tracks_per_sensor + sensor_id * MAX_TRACKS_PER_SENSOR;
 
-  // Initialize variables according to event number and sensor side
-  // Insert pointers (atomics)
+  // Atomics
+  __global unsigned int* const weaktracks_insertPointer = (__global unsigned int*) dev_atomicsStorage + 1;
   int shift = 2;
   __global int* const tracklets_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const max_numhits_to_process = (__global int*) dev_atomicsStorage + shift + sensor_id; shift += number_of_sensors;
   __global int* const tracks_per_sensor_insertPointer = (__global int*) dev_atomicsStorage + shift + sensor_id;
 
   // The fun begins
+
   struct Track t;
   struct Hit h0, h1;
   float tx, ty, best_fit;
@@ -140,25 +138,30 @@ __kernel void clTrackForwarding(
 
       // Compare / Mix the results from the get_local_size(1) threads
       const int val_best_fit = *((int*) &best_fit);
-      const int old_best_fit = best_fit_found ? atomic_min(best_fits + lookup_sensor * number_of_hits + first_hit_index, val_best_fit) : 0;
+      const int old_best_fit = best_fit_found ?
+        atomic_min(best_fits + lookup_sensor * number_of_hits + first_hit_index, val_best_fit)
+        : 0;
       barrier(CLK_GLOBAL_MEM_FENCE);
-      const int new_best_fit = best_fit_found ? best_fits[lookup_sensor * number_of_hits + first_hit_index] : 0;
+      const int new_best_fit = tracklet_inside_bounds ? 
+        best_fits[lookup_sensor * number_of_hits + first_hit_index]
+        : 0;
 
+      // Communicate to other threads in case the current thread is the best
       const bool accept_forward = best_fit_found &&
         (old_best_fit != val_best_fit) && (new_best_fit == val_best_fit);
 
-      // Communicate to other threads in case the current thread is the best
       if (accept_forward) {
         best_fits_hit_index[lookup_sensor * number_of_hits + first_hit_index] = best_hit_h2;
       }
 
       barrier(CLK_GLOBAL_MEM_FENCE);
 
-      if (tracklet_inside_bounds < MAX_SKIPPED_MODULES + 1) {
-        // We didn't find a hit
+      if (tracklet_inside_bounds && skipped_modules < MAX_SKIPPED_MODULES + 1) {
 
-        if (*((float*)&new_best_fit) == MAX_FLOAT) {
-          if (skipped_modules > MAX_SKIPPED_MODULES) {
+        // We didn't find a hit
+        if (new_best_fit == 0x7fffffff) {
+          
+          if (skipped_modules == MAX_SKIPPED_MODULES) {
             // Increment skipped_modules to distinguish
             // forming track that just skipped MAX_SKIPPED_MODULES from
             // forming track that skipped MAX_SKIPPED_MODULES some iterations before
@@ -168,7 +171,6 @@ __kernel void clTrackForwarding(
             // accordingly either to weak_tracks or to tracks
 
             if (get_local_id(1) == 0) {
-              // This is a one-man job...
               if (t.hitsNum == 3) {
                 const unsigned int weakP = atomic_add(weaktracks_insertPointer, 1);
 
@@ -176,7 +178,7 @@ __kernel void clTrackForwarding(
                 weak_tracks[weakP] = (sensor_id << 24) | trackno;
               }
               else {
-                const unsigned int trackP = atomic_add(tracks_per_sensor_insertPointer, 1);
+                const unsigned int trackP = atomic_add(dev_atomicsStorage + shift + sensor_id, 1);
                 tracks_per_sensor[trackP] = t;
               }
             }
@@ -186,13 +188,14 @@ __kernel void clTrackForwarding(
 
             // Corner case: We just looked up the last sensor
             // Add track accordingly either to weak_tracks or to tracks
-            if (lookup_sensor == 0 && get_local_id(0)) {
+            if (lookup_sensor == 0 && get_local_id(1) == 0) {
+              // This is a one-man job...
               if (t.hitsNum == 3) {
                 const unsigned int weakP = atomic_add(weaktracks_insertPointer, 1);
                 weak_tracks[weakP] = (sensor_id << 24) | trackno;
               }
               else {
-                const unsigned int trackP = atomic_add(tracks_per_sensor_insertPointer, 1);
+                const unsigned int trackP = atomic_add(dev_atomicsStorage + shift + sensor_id, 1);
                 tracks_per_sensor[trackP] = t;
               }
             }
@@ -201,18 +204,26 @@ __kernel void clTrackForwarding(
 
         else {
           // We found a new hit for our track
-          // Update the track
-          const int h2_index = best_fits_hit_index[lookup_sensor * number_of_hits + first_hit_index];
-          t.hits[t.hitsNum++] = h2_index;
 
           // Corner case: We just looked up the last sensor
-          // Add track accordingly
-          // It must have at least 4 hits, since we found one
-          if (lookup_sensor == 0 && get_local_id(0)) {
-            const unsigned int trackP = atomic_add(tracks_per_sensor_insertPointer, 1);
-            tracks_per_sensor[trackP] = t;
+          if (lookup_sensor == 0) {
+            if (get_local_id(1) == 0) {
+              // Update the track
+              const int h2_index = best_fits_hit_index[lookup_sensor * number_of_hits + first_hit_index];
+              t.hits[t.hitsNum++] = h2_index;
+
+              // Add track to tracks
+              const unsigned int trackP = atomic_add(dev_atomicsStorage + shift + sensor_id, 1);
+              tracks_per_sensor[trackP] = t;
+            }
           }
-          else if (lookup_sensor != 0) {
+
+          // We looked up any other sensor and found a best hit
+          else {
+            // Update the track
+            const int h2_index = best_fits_hit_index[lookup_sensor * number_of_hits + first_hit_index];
+            t.hits[t.hitsNum++] = h2_index;
+
             // Update skipped_modules
             skipped_modules = 0;
 

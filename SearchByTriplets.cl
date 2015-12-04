@@ -107,9 +107,9 @@ void trackCreation(
 
   // Compare / Mix the results from the get_local_size(1) threads
   const int val_best_fit = *((int*) &best_fit);
-  const int old_best_fit = atomic_min(best_fits + h0_index, val_best_fit);
+  const int old_best_fit = best_fit_found ? atomic_min(best_fits + h0_index, val_best_fit) : 0;
   barrier(CLK_GLOBAL_MEM_FENCE);
-  const int new_best_fit = best_fits[h0_index];
+  const int new_best_fit = best_fit_found ? best_fits[h0_index] : 0;
 
   const bool accept_track = (h0_index != -1) && best_fit_found &&
     (old_best_fit != val_best_fit) && (new_best_fit == val_best_fit);
