@@ -50,11 +50,12 @@ void preorder_by_x(std::vector<const std::vector<uint8_t>* > & input) {
   const std::vector<uint8_t>* startingEvent_input = input[0];
   setHPointersFromInput((uint8_t*) &(*startingEvent_input)[0], startingEvent_input->size());
 
-  int number_of_sensors = *h_no_sensors;
   for (int i=0; i<eventsToProcess; ++i) {
     int acc_hitnums = 0;
     const std::vector<uint8_t>* event_input = input[i];
+    
     setHPointersFromInput((uint8_t*) &(*event_input)[0], event_input->size());
+    int number_of_sensors = *h_no_sensors;
 
     for (int j=0; j<number_of_sensors; j++) {
       const int hitnums = h_sensor_hitNums[j];
