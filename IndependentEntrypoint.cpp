@@ -22,7 +22,6 @@
 #include <vector>
 #include <algorithm>
 
-
 /**
  * execute entrypoint of algorithm
  * Same signature as offloaded gaudi-algorithm
@@ -44,7 +43,7 @@ extern void independent_post_execute(
 
 void printUsage(char* argv[]){
     std::cerr << "Usage: "
-        << argv[0] << " <comma separated input filenames>"
+        << argv[0] << " <folder including .dat files> [number of files to process=100]"
         << std::endl;
 }
 
@@ -85,7 +84,7 @@ bool fileExists (const std::string& name) {
  * int dataSize
  * char* data
  */
-void readFileIntoVector(std::string filename, std::vector<unsigned char> & output){
+void readFileIntoVector(std::string filename, std::vector<unsigned char>& output){
     // Check if file exists
     if (!fileExists(filename)){
         throw StrException("Error: File " + filename + " does not exist.");
@@ -135,56 +134,55 @@ void readFileIntoVector(std::string filename, std::vector<unsigned char> & outpu
  */
 int main(int argc, char *argv[])
 {
-    std::string filename;
+    std::vector<std::vector<unsigned char>> input;
+    std::string folderName;
     int fileNumber = 1;
-    std::string delimiter = ",";
-    std::vector<std::vector<unsigned char> > input;
+    size_t numberOfFilesToProcess = 50;
 
     // Get params (getopt independent)
-    if (argc != 2){
-        printUsage(argv);
-        return 0;
-    }
-    
-    filename = std::string(argv[1]);
-
-    // Check how many files were specified and
-    // call the entrypoint with the suggested format
-    if(filename.empty()){
-        std::cerr << "No filename specified" << std::endl;
+    if (argc < 2){
         printUsage(argv);
         return -1;
     }
-
-    size_t numberOfOcurrences = std::count(filename.begin(), filename.end(), ',') + 1;
-    input.resize(numberOfOcurrences);
-    int input_index = 0;
-
-    size_t posFound = filename.find(delimiter);
-    if (posFound != std::string::npos){
-        size_t prevFound = 0;
-        while(prevFound != std::string::npos){
-            if (posFound == std::string::npos){
-                readFileIntoVector(filename.substr(prevFound, posFound-prevFound), input[input_index]);
-                prevFound = posFound;
-            }
-            else {
-                readFileIntoVector(filename.substr(prevFound, posFound-prevFound), input[input_index]);
-                prevFound = posFound + 1;
-                posFound = filename.find(delimiter, posFound + 1);
-            }
-            input_index++;
-        }
+    
+    folderName = std::string(argv[1]);
+    if (argc >= 3) {
+        numberOfFilesToProcess = atoi(argv[2]);
     }
-    else {
-        readFileIntoVector(filename, input[0]);
+
+    input.resize(numberOfFilesToProcess);
+    std::vector<std::string> dataFilesInFolder;
+
+    // Directory listing in C
+    DIR *dir;
+    struct dirent *ent;
+    if ((dir = opendir (folderName.c_str())) != nullptr) {
+        while ((ent = readdir (dir)) != nullptr) {
+            // std::string fn = "filename.conf";
+            // if(fn.substr(fn.find_last_of(".") + 1) == "conf") {
+            std::string filename = std::string(ent->d_name);
+            if (filename.substr(filename.find_last_of(".") + 1) == "dat") {
+                dataFilesInFolder.push_back(filename);
+            }
+        }
+        closedir (dir);
+    }
+    if (dir == nullptr || dataFilesInFolder.empty()) {
+        std::cerr << "Directory " << folderName << " either could not be opened, or is empty" << std::endl;
+        return -1;
+    }
+
+    // Process in round robin the files required
+    for (unsigned int i=0; i<numberOfFilesToProcess; ++i) {
+        unsigned int filenumber = i % dataFilesInFolder.size();
+        readFileIntoVector(folderName + "/" + dataFilesInFolder[filenumber], input[i]);
     }
 
     // Print out first byte from formatter->inputPointer
     std::cout << input.size() << " files read" << std::endl;
 
     // Call offloaded algo
-    std::vector<std::vector<unsigned char> > output;
+    std::vector<std::vector<unsigned char>> output;
     independent_execute(input, output);
 
     // Post execution entrypoint
