@@ -21,6 +21,8 @@
 #include <cstdlib>
 #include <vector>
 #include <algorithm>
+#include <cstdio>
+#include <dirent.h>
 
 /**
  * execute entrypoint of algorithm
