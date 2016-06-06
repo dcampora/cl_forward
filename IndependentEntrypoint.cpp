@@ -152,6 +152,11 @@ int main(int argc, char *argv[])
         numberOfFilesToProcess = atoi(argv[2]);
     }
 
+    std::cout << "Execution options:" << std::endl
+        << " Executable: " << argv[0] << std::endl
+        << " Folder name: " << argv[1] << std::endl
+        << " Number of files: " << argv[2] << std::endl << std::endl;
+
     input.resize(numberOfFilesToProcess);
     std::vector<std::string> dataFilesInFolder;
 
